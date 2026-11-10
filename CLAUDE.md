@@ -59,11 +59,21 @@ match MMM-NOAATides; `timezone` is deliberately not their `time` (NOAA's `lst_ld
 it takes an IANA name.
 
 - `stationID` (required): NOAA station ID (test station: `9445958`, Bremerton, WA)
+- `stationName`: header text; default NOAA's name (`"Bremerton, WA"`), else the station ID.
+  A `header` on the module entry (MagicMirror's own option) wins over both.
 - `timezone`: IANA name (e.g. `"America/Los_Angeles"`); defaults to the mirror's timezone
 - `units`: `"english"` (ft, default) or `"metric"` (m)
 - `datum`: NOAA height baseline (default `"MLLW"`; see Open work)
+- `meanSeaLevel`: MSL height in the chart's units and datum (default none; 9445958 uses 6.78 ft
+  above MLLW). Turns on the MSL line and MSL shading.
+- `gridStep`: height between grid lines (default 2 ft / 0.5 m by `units`)
+- `extremeRange`: `[low, high]` (default none; 9445958 uses `[-3.0, 13.0]`). Strictly below
+  `low` or above `high` is extreme.
 - `width`, `height`: chart size in px (default 400 × 400)
 - `overlayUpdateInterval`: how often the current-time overlay redraws (default 60 s, in ms)
+
+The page checks the types of `meanSeaLevel`, `gridStep` and `extremeRange` and shows a
+message instead of the chart if one is wrong.
 
 ## Design constraint: one station
 
@@ -77,11 +87,14 @@ Automated (`tests/`), from the module directory: `node --test` (or `npm test`). 
 needed.
 - `tideTime.test.js`: the two-day window (including 23/25-hour daylight-time days and other
   timezones), the next 00:01 refresh, label formats, timezone validation.
-- `noaa.test.js`: request URLs, parsing, NOAA error responses, `fetchTides` with a stand-in
-  `fetch`. Fixtures in `tests/fixtures/` are real 9445958 responses (Nov 9–10, 2026, Pacific).
+- `noaa.test.js`: request URLs, parsing, NOAA error responses, station name, `fetchTides`
+  with a stand-in `fetch` (including a failed station-name request). Fixtures in
+  `tests/fixtures/` are real 9445958 responses (Nov 9–10, 2026, Pacific, plus station metadata).
 - `fetchCycle.test.js`: fetch at start, 00:01 schedule, hourly retry, stop; fake clock and timers.
-- `chartSvg.test.js`: SVG markup (one curve path, small element count, labels, day names,
-  divider) and overlay placement and interpolation.
+- `chartSvg.test.js`: SVG markup (element count, prefixed ids, gutter), height range always
+  including 0 and MSL, axis title, grid steps (default and configured, ft and m), shading with
+  and without MSL, past/future split, labels, extreme badges (strict bounds), x-axis labels,
+  and overlay placement, interpolation and past width.
 
 `node_helper.js` and `MMM-TideChartSVG.js` are thin and need MagicMirror itself; they're
 checked by the manual test.
@@ -95,8 +108,11 @@ NOAA CO-OPS Tides & Currents data API (`api.tidesandcurrents.noaa.gov/api/prod/d
 tide predictions. Requests use UTC (`time_zone=gmt`); times are converted to the configured
 timezone only for display.
 
-Station reference data (metadata API, `.../mdapi/prod/webapi/stations/{id}/...`), for
-future abnormal-tide rules:
+Station metadata API (`.../mdapi/prod/webapi/stations/{id}.json`): the station's `name` and
+`state`, fetched with every prediction fetch for the header. Optional: if it fails, the
+predictions still count and the header falls back to the station ID.
+
+Other station reference data on the same API (not used by the module):
 - `datums.json`: MHHW, MLLW, etc., plus HAT/LAT (highest/lowest astronomical tide) and
   record observed max/min. Values are relative to station datum (STND); subtract MLLW to
   get heights on the chart's baseline.
@@ -110,31 +126,48 @@ future abnormal-tide rules:
 - `lib/fetchCycle.js`: fetch at start; after a success, again at the next 00:01 local time;
   after a failure, every hour until it works. Sends `TIDE_DATA` or `TIDE_ERROR`.
 - `lib/noaa.js`: builds the two requests (6-minute curve and `interval=hilo`) over the
-  window, in UTC, and parses them into `{ t: UTC ms, v, type? }`. NOAA reports problems as
-  `{ error: { message } }`, often with HTTP 200.
+  window, in UTC, and parses them into `{ t: UTC ms, v, type? }`; also fetches the station
+  name. NOAA reports problems as `{ error: { message } }`, often with HTTP 200.
 - `lib/tideTime.js`: timezone math with `Intl` (window, next 00:01, labels). Shared by Node
   and the page (UMD-style: `module.exports` or a `TideTime` global).
 - `lib/chartSvg.js`: builds the SVG markup string and the overlay positions (pure; shared
   the same way as `ChartSvg`).
-- `MMM-TideChartSVG.js`: browser side. `getDom` runs once and builds the wrapper; after
-  that the module doesn't use `updateDom` (which rebuilds the whole module and can flash).
-  New data: markup is parsed off-screen in a `<template>` and swapped in with one
-  `replaceChildren`, so the chart never disappears. The overlay updates on its own
-  interval by setting a few attributes.
-- `MMM-TideChartSVG.css`: styles. Standard MagicMirror colors (white and grey on black);
-  the fill uses MMM-WaStateFerry's water color `#7fa7c9`.
+- `MMM-TideChartSVG.js`: browser side. `getDom` builds the wrapper once and always returns
+  it. New data: markup is parsed off-screen in a `<template>` and swapped in with one
+  `replaceChildren`, so the chart never disappears. `updateDom` is called only when the
+  header (station name) changes; since `getDom` returns the same wrapper, the chart isn't
+  rebuilt. Data that arrives before `getDom` is kept and drawn when the wrapper exists. The
+  overlay timer moves the now-line, dot and label, moves the past/future clip edge, and
+  toggles `tide-past` on every element with a `data-t` (highs/lows, badges, hour labels).
+- **Don't overwrite MagicMirror's module properties** (e.g. `this.data`, which holds the
+  module's position and header; overwriting it kept the module off screen).
+- `MMM-TideChartSVG.css`: all colors. Standard MagicMirror greys and whites; blue `#7fa7c9`
+  and sand `#d8c8a0` from MMM-WaStateFerry's map, red `#ff6b6b` and purple `#c77dff` from its
+  delay colors. Gradient colors are set on `<stop>` classes; opacity is in the markup.
 - `tests/`: automated tests.
 
 ## Display rules
 
 - **Window:** two full calendar days in the configured timezone, from 00:00 today to 00:00
   the day after tomorrow.
+- **Header:** the station name (MagicMirror's standard module header).
+- **Layout:** a 44 px left gutter (height numbers at each grid line, rotated title "Height
+  above <datum> (<unit>)"), the plot, and a 20 px x-axis row at the bottom.
+- **Height range:** always includes 0 and `meanSeaLevel`; the 0 line is always drawn.
+- **Grid:** very faint, at every `gridStep` and every 6 hours.
+- **Shading:** without MSL, blue fading toward the bottom. With MSL, only between the curve
+  and the MSL line: blue above, sand below, fading toward the line; dashed MSL line labeled
+  "MSL" (no value).
+- **Past:** up to now, the curve is grey, the shading faint (same colors), and high/low
+  labels and hour labels grey.
 - **High/low labels:** time (24-hour, e.g. `15:42`) and height to one decimal place
-  (e.g. `7.2 ft`).
-- **Chart elements:** a day divider at midnight with day names, light 6-hour ticks, no
-  y-axis, a soft fill under the curve, no title.
-- **Overlay:** a vertical line at the current time, a dot on the curve with the current
-  height, and a rising or falling arrow.
+  (e.g. `7.2 ft`): time in light grey, height in blue.
+- **Extreme tides:** the label sits on a badge, red for highs and purple for lows; once in
+  the past, the badge becomes an outline. Badge width is estimated from the text length.
+- **X-axis:** one row; the day name starts each day, then `06`, `12`, `18` under short
+  ticks; a taller tick and a dashed divider at midnight.
+- **Overlay:** a vertical line at the current time, a blue dot with a white outline on the
+  curve, and the current height with a rising or falling arrow.
 - **Errors:** an error before any data shows the error message; after data has loaded, a
   failed update keeps the last chart and adds "(latest update failed)".
 
@@ -143,9 +176,6 @@ future abnormal-tide rules:
 To decide once real data can be compared:
 - **Curve resolution:** 6-minute predictions vs. hourly vs. curve from high/low only.
 - **Datum:** which height baseline to display (MLLW is NOAA's default for predictions).
-- **Look:** iterate on the chart's design; the colors may borrow from MMM-WaStateFerry.
-- **Abnormal tides:** rules for special colors or markers on unusually high or low tides
-  (candidates: below 0 ft MLLW, near HAT/LAT, above the NWS minor flood level).
 
 ## Rejected ideas
 
