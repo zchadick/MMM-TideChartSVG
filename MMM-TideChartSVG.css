@@ -1,0 +1,64 @@
+/* MMM-TideChartSVG: standard MagicMirror greys and whites; water accent from MMM-WaStateFerry (#7fa7c9). */
+
+.MMM-TideChartSVG .tide-chart {
+  display: block;
+  overflow: visible;
+  font-family: inherit;
+}
+
+.MMM-TideChartSVG .tide-fill {
+  fill: rgb(127 167 201 / 15%);
+  stroke: none;
+}
+
+.MMM-TideChartSVG .tide-curve {
+  fill: none;
+  stroke: #aaa;
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.MMM-TideChartSVG .tide-ticks {
+  fill: none;
+  stroke: #666;
+  stroke-width: 1;
+}
+
+.MMM-TideChartSVG .tide-divider {
+  stroke: #666;
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.MMM-TideChartSVG .tide-point {
+  fill: #aaa;
+}
+
+.MMM-TideChartSVG .tide-label {
+  fill: #999;
+  font-size: 13px;
+}
+
+.MMM-TideChartSVG .tide-day {
+  fill: #999;
+  font-size: 14px;
+}
+
+.MMM-TideChartSVG .tide-now-line {
+  stroke: #fff;
+  stroke-width: 1;
+  opacity: 0.6;
+}
+
+.MMM-TideChartSVG .tide-now-dot {
+  fill: #fff;
+}
+
+.MMM-TideChartSVG .tide-now-label {
+  fill: #fff;
+  font-size: 14px;
+}
+
+.MMM-TideChartSVG .tide-status {
+  text-align: center;
+}

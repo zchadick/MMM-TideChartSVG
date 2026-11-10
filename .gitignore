@@ -1,0 +1,13 @@
+# Local, untracked Claude notes
+CLAUDE.local.md
+
+# Dependencies
+node_modules/
+
+# Local config / secrets
+config.env
+*.local.*
+.env
+
+# OS / editor
+.DS_Store

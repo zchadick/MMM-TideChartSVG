@@ -1,0 +1,14 @@
+{
+  "name": "mmm-tidechartsvg",
+  "version": "0.1.0",
+  "description": "MagicMirror² module showing a two-day NOAA tide chart drawn as an SVG.",
+  "main": "MMM-TideChartSVG.js",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22.21.1"
+  }
+}
