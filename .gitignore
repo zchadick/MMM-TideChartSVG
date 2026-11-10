@@ -11,3 +11,4 @@ config.env
 
 # OS / editor
 .DS_Store
+*.code-workspace
