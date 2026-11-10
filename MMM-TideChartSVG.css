@@ -1,4 +1,12 @@
-/* MMM-TideChartSVG: standard MagicMirror greys and whites; water accent from MMM-WaStateFerry (#7fa7c9). */
+/* MMM-TideChartSVG
+ * Standard MagicMirror greys and whites. Blue (#7fa7c9) and sand (#d8c8a0) are MMM-WaStateFerry's map
+ * colors; red (#ff6b6b) and purple (#c77dff) are its delay colors.
+ */
+
+/* Header (station name): left-aligned, even in a centered region such as top_center */
+.MMM-TideChartSVG .module-header {
+  text-align: left;
+}
 
 .MMM-TideChartSVG .tide-chart {
   display: block;
@@ -6,21 +14,15 @@
   font-family: inherit;
 }
 
-.MMM-TideChartSVG .tide-fill {
-  fill: rgb(127 167 201 / 15%);
-  stroke: none;
+/* Background */
+.MMM-TideChartSVG .tide-grid {
+  fill: none;
+  stroke: rgb(255 255 255 / 6%);
+  stroke-width: 1;
 }
 
-.MMM-TideChartSVG .tide-curve {
-  fill: none;
-  stroke: #aaa;
-  stroke-width: 2;
-  stroke-linejoin: round;
-}
-
-.MMM-TideChartSVG .tide-ticks {
-  fill: none;
-  stroke: #666;
+.MMM-TideChartSVG .tide-zero {
+  stroke: #8d959e;
   stroke-width: 1;
 }
 
@@ -30,20 +32,158 @@
   stroke-dasharray: 3 3;
 }
 
+.MMM-TideChartSVG .tide-msl {
+  stroke: rgb(255 255 255 / 35%);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+}
+
+.MMM-TideChartSVG .tide-msl-label {
+  fill: #777;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+
+/* Shading colors (opacity comes from the gradients) */
+.MMM-TideChartSVG .tide-stop-fill,
+.MMM-TideChartSVG .tide-stop-above {
+  stop-color: #7fa7c9;
+}
+
+.MMM-TideChartSVG .tide-stop-below {
+  stop-color: #d8c8a0;
+}
+
+/* Curve: grey in the past, blue from now on */
+.MMM-TideChartSVG .tide-curve {
+  fill: none;
+  stroke-linejoin: round;
+}
+
+.MMM-TideChartSVG .tide-curve-future {
+  stroke: #7fa7c9;
+  stroke-width: 2;
+}
+
+.MMM-TideChartSVG .tide-curve-past {
+  stroke: #555;
+  stroke-width: 1.5;
+}
+
+/* Highs and lows */
 .MMM-TideChartSVG .tide-point {
-  fill: #aaa;
+  fill: #7fa7c9;
 }
 
 .MMM-TideChartSVG .tide-label {
-  fill: #999;
   font-size: 13px;
 }
 
-.MMM-TideChartSVG .tide-day {
-  fill: #999;
-  font-size: 14px;
+.MMM-TideChartSVG .tide-label-time {
+  fill: #ddd;
 }
 
+.MMM-TideChartSVG .tide-label-height {
+  fill: #7fa7c9;
+}
+
+.MMM-TideChartSVG .tide-point.tide-past {
+  fill: #555;
+}
+
+.MMM-TideChartSVG .tide-label.tide-past tspan {
+  fill: #555;
+}
+
+/* Extreme tides: label on a solid badge (red high, purple low); an outline once in the past */
+.MMM-TideChartSVG .tide-badge-high {
+  fill: #ff6b6b;
+}
+
+.MMM-TideChartSVG .tide-badge-low {
+  fill: #c77dff;
+}
+
+.MMM-TideChartSVG .tide-label.tide-extreme tspan {
+  fill: #000;
+  font-weight: 700;
+}
+
+.MMM-TideChartSVG .tide-point.tide-extreme-high {
+  fill: #ff6b6b;
+}
+
+.MMM-TideChartSVG .tide-point.tide-extreme-low {
+  fill: #c77dff;
+}
+
+.MMM-TideChartSVG .tide-point.tide-extreme.tide-past {
+  fill: #555;
+}
+
+.MMM-TideChartSVG .tide-badge.tide-past {
+  fill: none;
+  stroke-width: 1.5;
+  opacity: 0.6;
+}
+
+.MMM-TideChartSVG .tide-badge-high.tide-past {
+  stroke: #ff6b6b;
+}
+
+.MMM-TideChartSVG .tide-badge-low.tide-past {
+  stroke: #c77dff;
+}
+
+.MMM-TideChartSVG .tide-label.tide-extreme-high.tide-past tspan {
+  fill: #ff6b6b;
+  opacity: 0.6;
+}
+
+.MMM-TideChartSVG .tide-label.tide-extreme-low.tide-past tspan {
+  fill: #c77dff;
+  opacity: 0.6;
+}
+
+/* Axes */
+.MMM-TideChartSVG .tide-scale {
+  fill: #666;
+  font-size: 11px;
+}
+
+.MMM-TideChartSVG .tide-scale-zero {
+  fill: #aaa;
+}
+
+.MMM-TideChartSVG .tide-axis-title {
+  fill: #888;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.MMM-TideChartSVG .tide-axis-ticks {
+  fill: none;
+  stroke: #777;
+  stroke-width: 1;
+}
+
+.MMM-TideChartSVG .tide-hour {
+  fill: #999;
+  font-size: 11px;
+}
+
+.MMM-TideChartSVG .tide-hour.tide-past {
+  fill: #555;
+}
+
+.MMM-TideChartSVG .tide-day {
+  fill: #ccc;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+/* Now */
 .MMM-TideChartSVG .tide-now-line {
   stroke: #fff;
   stroke-width: 1;
@@ -51,7 +191,9 @@
 }
 
 .MMM-TideChartSVG .tide-now-dot {
-  fill: #fff;
+  fill: #7fa7c9;
+  stroke: #fff;
+  stroke-width: 2;
 }
 
 .MMM-TideChartSVG .tide-now-label {

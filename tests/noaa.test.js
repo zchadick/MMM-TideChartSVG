@@ -47,15 +47,32 @@ test("NOAA error responses become errors", () => {
 	assert.throws(() => noaa.parsePredictions({}), /no predictions/);
 });
 
-test("fetchTides fetches both feeds for the local two-day window", async () => {
+test("station name comes from NOAA's station metadata", () => {
+	assert.equal(noaa.stationUrl("9445958"), "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/9445958.json");
+	assert.equal(noaa.parseStationName(fixture("station-9445958.json")), "Bremerton, WA");
+	assert.equal(noaa.parseStationName({ stations: [{ name: "Somewhere" }] }), "Somewhere");
+	assert.equal(noaa.parseStationName({}), null);
+});
+
+function fakeNoaa ({ stationFails = false } = {}) {
 	const requested = [];
-	const fakeFetch = async (url) => {
+	const fetchFn = async (url) => {
 		requested.push(url);
+		if (url.includes("/mdapi/")) {
+			if (stationFails) return { ok: false, status: 500, json: async () => ({}) };
+			return { ok: true, status: 200, json: async () => fixture("station-9445958.json") };
+		}
 		const name = url.includes("interval=hilo") ? "hilo-9445958.json" : "curve-9445958.json";
 		return { ok: true, status: 200, json: async () => fixture(name) };
 	};
-	const data = await noaa.fetchTides(CONFIG, Date.parse("2026-11-09T23:30:00Z"), fakeFetch);
-	assert.equal(requested.length, 2);
+	return { requested, fetchFn };
+}
+
+test("fetchTides fetches both feeds for the local two-day window, plus the station name", async () => {
+	const { requested, fetchFn } = fakeNoaa();
+	const data = await noaa.fetchTides(CONFIG, Date.parse("2026-11-09T23:30:00Z"), fetchFn);
+	assert.equal(requested.length, 3);
+	assert.equal(data.stationName, "Bremerton, WA");
 	assert.equal(data.start, Date.parse("2026-11-09T08:00:00Z"));
 	assert.equal(data.mid, Date.parse("2026-11-10T08:00:00Z"));
 	assert.equal(data.end, Date.parse("2026-11-11T08:00:00Z"));
@@ -63,6 +80,13 @@ test("fetchTides fetches both feeds for the local two-day window", async () => {
 	assert.equal(data.hilo.length, 8);
 	assert.equal(data.stationID, "9445958");
 	assert.equal(data.units, "english");
+});
+
+test("fetchTides still succeeds if only the station name fails", async () => {
+	const { fetchFn } = fakeNoaa({ stationFails: true });
+	const data = await noaa.fetchTides(CONFIG, Date.parse("2026-11-09T23:30:00Z"), fetchFn);
+	assert.equal(data.stationName, null);
+	assert.equal(data.curve.length, 481);
 });
 
 test("fetchTides fails on an HTTP error", async () => {
