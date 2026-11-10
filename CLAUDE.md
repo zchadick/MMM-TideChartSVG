@@ -4,7 +4,7 @@ A MagicMirror² module that shows a tide chart for one NOAA station, covering to
 tomorrow (local time), drawn as an SVG. High and low tides are labeled with their time and
 height, and an overlay marks the current time and tide level.
 
-The repo will be public. Machine-specific notes live in a git-ignored `CLAUDE.local.md`.
+The repo is public. Machine-specific notes live in a git-ignored `CLAUDE.local.md`.
 
 ## Working rules
 
