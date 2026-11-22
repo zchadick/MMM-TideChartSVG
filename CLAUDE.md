@@ -19,6 +19,11 @@ The repo is public. Machine-specific notes live in a git-ignored `CLAUDE.local.m
   Before adding complexity to support an edge case, consider whether it should simply be
   explicitly unsupported and documented instead. Raise the choice rather than defaulting
   to support.
+- **Bias toward simplicity over edge cases.** Look for edge cases where the module breaks
+  down, raise them, and document for each whether it will be handled or left unsupported.
+  By default prefer the simpler design: an unusual case is explicitly unsupported (with a
+  clear error and a note in README.md) rather than handled with extra code. Don't get
+  stuck on edge cases.
 - **Tests use Node's built-in `node:test`;** no test-framework dependency. New or changed
   behavior gets tests.
 - **No personal information in the repo.** Keep personal paths, host names and any
