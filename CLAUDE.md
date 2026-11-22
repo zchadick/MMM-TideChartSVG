@@ -19,6 +19,11 @@ The repo is public. Machine-specific notes live in a git-ignored `CLAUDE.local.m
   Before adding complexity to support an edge case, consider whether it should simply be
   explicitly unsupported and documented instead. Raise the choice rather than defaulting
   to support.
+- **Bias toward simplicity over edge cases.** Look for edge cases where the module breaks
+  down, raise them, and document for each whether it will be handled or left unsupported.
+  By default prefer the simpler design: an unusual case is explicitly unsupported (with a
+  clear error and a note in README.md) rather than handled with extra code. Don't get
+  stuck on edge cases.
 - **Tests use Node's built-in `node:test`;** no test-framework dependency. New or changed
   behavior gets tests.
 - **No personal information in the repo.** Keep personal paths, host names and any
@@ -58,12 +63,14 @@ Settings go in the module's entry in `config/config.js`. `stationID`, `units` an
 match MMM-NOAATides; `timezone` is deliberately not their `time` (NOAA's `lst_ldt`), since
 it takes an IANA name.
 
-- `stationID` (required): NOAA station ID (test station: `9445958`, Bremerton, WA)
+- `stationID` (required): NOAA station ID (test stations: `9445958`, Bremerton, WA; subordinate:
+  `9445882`, Eagle Harbor, Bainbridge Island, WA, reference station `9447130`, Seattle)
 - `stationName`: header text; default NOAA's name (`"Bremerton, WA"`), else the station ID.
   A `header` on the module entry (MagicMirror's own option) wins over both.
 - `timezone`: IANA name (e.g. `"America/Los_Angeles"`); defaults to the mirror's timezone
 - `units`: `"english"` (ft, default) or `"metric"` (m)
-- `datum`: NOAA height baseline (default `"MLLW"`; see Open work)
+- `datum`: NOAA height baseline (default `"MLLW"`; see Open work). Subordinate stations: MLLW
+  only (NOAA publishes nothing else for them); any other datum is an error.
 - `meanSeaLevel`: MSL height in the chart's units and datum (default none; 9445958 uses 6.78 ft
   above MLLW). Turns on the MSL line and MSL shading.
 - `gridStep`: height between grid lines (default 2 ft / 0.5 m by `units`)
@@ -81,15 +88,44 @@ One station per MagicMirror installation. The first instance to register sets th
 an instance with a different station is ignored with a log warning and shows "Only one tide
 station per mirror is supported." Documented in README.md ("Limitations"); keep them in sync.
 
+## Subordinate stations
+
+NOAA publishes no curve for a subordinate station (offsets `type: "S"`), only highs and lows
+derived from a reference station's with two fixed corrections (high and low: minutes of time
+shift and a height ratio). Documented in README.md ("Subordinate stations", "Limitations");
+keep them in sync.
+
+- **Curve:** the reference station's 6-minute curve with the corrections applied
+  (`lib/subordinate.js`). Labels are the station's own published highs and lows. The modeled
+  curve reproduces them exactly (checked for Eagle Harbor).
+- **Decision: blend by time.** NOAA defines the corrections only at highs and lows. Between
+  them, each point's correction is blended by time from one tide's correction to the next.
+  Rejected: blending by height (needs a clamp where the 6-minute curve overshoots a published
+  extreme; no visible gain). Weakness: neither is NOAA's method; for Eagle Harbor the two differ
+  by ≤ 0.03 ft, but for a station whose high and low corrections differ a lot, the in-between
+  curve is less certain. The shape is always the reference station's.
+- **Fail rather than show inaccurate data:** any failed request (station's highs/lows, reference
+  curve or highs/lows) fails the whole fetch; no fallback to a highs/lows-only curve.
+- **Unsupported, with descriptive errors:** "A" (added-feet) height offsets; a `datum` other
+  than MLLW. These retry hourly like any other error.
+- **Header:** `*` after whatever header is shown (NOAA name, `stationName` or `header`).
+
 ## Testing
 
 Automated (`tests/`), from the module directory: `node --test` (or `npm test`). No network
 needed.
 - `tideTime.test.js`: the two-day window (including 23/25-hour daylight-time days and other
   timezones), the next 00:01 refresh, label formats, timezone validation.
-- `noaa.test.js`: request URLs, parsing, NOAA error responses, station name, `fetchTides`
-  with a stand-in `fetch` (including a failed station-name request). Fixtures in
-  `tests/fixtures/` are real 9445958 responses (Nov 9–10, 2026, Pacific, plus station metadata).
+- `noaa.test.js`: request URLs, parsing, NOAA error responses, station name, offsets
+  (subordinate or not, "A" and incomplete offsets), the startup step (both requests required,
+  MLLW-only datum for subordinate stations), `fetchTides` for both station types with a
+  stand-in `fetch` (exact requests; modeled curve passes through the published highs/lows; no
+  fallback when a request fails), and `createTideSource` (startup step once, retried until it
+  works). Fixtures in `tests/fixtures/` are real responses: 9445958 (Nov 9–10, 2026, Pacific,
+  plus station metadata and offsets); 9445882 (Nov 22–23, 2026: highs/lows, station metadata,
+  offsets) and its reference 9447130 (curve and highs/lows, Nov 21–24 UTC with the day margin).
+- `subordinate.test.js`: corrections at highs and lows, blend by time, window edges, failure
+  when the reference data doesn't cover the window, and ±3-hour offsets with the real data.
 - `fetchCycle.test.js`: fetch at start, 00:01 schedule, hourly retry, stop; fake clock and timers.
 - `chartSvg.test.js`: SVG markup (element count, prefixed ids, gutter), height range always
   including 0 and MSL, axis title, grid steps (default and configured, ft and m), shading with
@@ -108,9 +144,14 @@ NOAA CO-OPS Tides & Currents data API (`api.tidesandcurrents.noaa.gov/api/prod/d
 tide predictions. Requests use UTC (`time_zone=gmt`); times are converted to the configured
 timezone only for display.
 
-Station metadata API (`.../mdapi/prod/webapi/stations/{id}.json`): the station's `name` and
-`state`, fetched with every prediction fetch for the header. Optional: if it fails, the
-predictions still count and the header falls back to the station ID.
+Station metadata API, fetched once at startup (both required; until they work, the error
+shows and the whole step retries hourly with the fetch):
+- `.../mdapi/prod/webapi/stations/{id}.json`: the station's `name` and `state` for the header
+  (no name → the header shows the station ID). Its shape differs between station kinds
+  (e.g. no `type` for water-level stations like 9445958), so it isn't used for the type.
+- `.../stations/{id}/tidepredoffsets.json`: same shape for every station. `type` `"R"`
+  (own predictions) or `"S"` (subordinate: `refStationId`, `timeOffsetHighTide`/`LowTide` in
+  minutes, `heightOffsetHighTide`/`LowTide`, `heightAdjustedType` `"R"` ratio or `"A"` added).
 
 Other station reference data on the same API (not used by the module):
 - `datums.json`: MHHW, MLLW, etc., plus HAT/LAT (highest/lowest astronomical tide) and
@@ -126,8 +167,14 @@ Other station reference data on the same API (not used by the module):
 - `lib/fetchCycle.js`: fetch at start; after a success, again at the next 00:01 local time;
   after a failure, every hour until it works. Sends `TIDE_DATA` or `TIDE_ERROR`.
 - `lib/noaa.js`: builds the two requests (6-minute curve and `interval=hilo`) over the
-  window, in UTC, and parses them into `{ t: UTC ms, v, type? }`; also fetches the station
-  name. NOAA reports problems as `{ error: { message } }`, often with HTTP 200.
+  window, in UTC, and parses them into `{ t: UTC ms, v, type? }`. `fetchStation` is the
+  startup step (name and offsets); `createTideSource` runs it on the first fetch (and each
+  fetch until it works), keeps the result, and then makes only the daily requests. For a
+  subordinate station the daily fetch is its own highs/lows plus the reference station's
+  curve and highs/lows with a day's margin on each side; the result has `modeled: true`.
+  NOAA reports problems as `{ error: { message } }`, often with HTTP 200.
+- `lib/subordinate.js`: models a subordinate station's curve from the reference station's
+  (pure); trims it to the window.
 - `lib/tideTime.js`: timezone math with `Intl` (window, next 00:01, labels). Shared by Node
   and the page (UMD-style: `module.exports` or a `TideTime` global).
 - `lib/chartSvg.js`: builds the SVG markup string and the overlay positions (pure; shared
@@ -135,7 +182,7 @@ Other station reference data on the same API (not used by the module):
 - `MMM-TideChartSVG.js`: browser side. `getDom` builds the wrapper once and always returns
   it. New data: markup is parsed off-screen in a `<template>` and swapped in with one
   `replaceChildren`, so the chart never disappears. `updateDom` is called only when the
-  header (station name) changes; since `getDom` returns the same wrapper, the chart isn't
+  header (station name, or the `*` for a modeled curve) changes; since `getDom` returns the same wrapper, the chart isn't
   rebuilt. Data that arrives before `getDom` is kept and drawn when the wrapper exists. The
   overlay timer moves the now-line, dot and label, moves the past/future clip edge, and
   toggles `tide-past` on every element with a `data-t` (highs/lows, badges, hour labels).
@@ -150,7 +197,8 @@ Other station reference data on the same API (not used by the module):
 
 - **Window:** two full calendar days in the configured timezone, from 00:00 today to 00:00
   the day after tomorrow.
-- **Header:** the station name (MagicMirror's standard module header).
+- **Header:** the station name (MagicMirror's standard module header), followed by `*` when
+  the curve is modeled (subordinate stations).
 - **Layout:** a 44 px left gutter (height numbers at each grid line, rotated title "Height
   above <datum> (<unit>)"), the plot, and a 20 px x-axis row at the bottom.
 - **Height range:** always includes 0 and `meanSeaLevel`; the 0 line is always drawn.

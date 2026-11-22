@@ -30,7 +30,9 @@ Module.register("MMM-TideChartSVG", {
 
 	getHeader () {
 		// A header set in config.js wins; otherwise the station's name once it's known.
-		return this.data.header || this.config.stationName || this.stationName || "";
+		// "*" marks a curve modeled from a reference station (subordinate stations), whatever the header.
+		const header = this.data.header || this.config.stationName || this.stationName || "";
+		return header && this.modeled ? `${header}*` : header;
 	},
 
 	start () {
@@ -39,6 +41,7 @@ Module.register("MMM-TideChartSVG", {
 		this.overlay = null;
 		this.overlayTimer = null;
 		this.stationName = null;
+		this.modeled = false;
 		this.pending = null;
 		this.problem = this.checkConfig();
 		if (this.problem) {
@@ -107,17 +110,20 @@ Module.register("MMM-TideChartSVG", {
 		}
 		if (notification === "TIDE_DATA") {
 			this.draw(payload);
-			this.updateStationName(payload.stationName || String(this.config.stationID));
+			this.updateStationName(payload.stationName || String(this.config.stationID), Boolean(payload.modeled));
 		} else if (notification === "TIDE_ERROR") {
 			this.setStatus(this.tides ? "(latest update failed)" : `Tide data unavailable: ${payload.message}`);
 		}
 	},
 
-	updateStationName (name) {
-		if (name === this.stationName) return;
+	updateStationName (name, modeled) {
+		if (name === this.stationName && modeled === this.modeled) return;
+		const showsName = !this.data.header && !this.config.stationName;
+		const headerChanges = modeled !== this.modeled || showsName;
 		this.stationName = name;
+		this.modeled = modeled;
 		// Only the header changes; getDom returns the same wrapper, so the chart isn't rebuilt.
-		if (!this.data.header && !this.config.stationName) this.updateDom(0);
+		if (headerChanges) this.updateDom(0);
 	},
 
 	draw (data) {
