@@ -3,7 +3,7 @@
 
 const NodeHelper = require("node_helper");
 const Log = require("logger");
-const { fetchTides } = require("./lib/noaa.js");
+const { createTideSource } = require("./lib/noaa.js");
 const { createFetchCycle } = require("./lib/fetchCycle.js");
 
 module.exports = NodeHelper.create({
@@ -21,7 +21,7 @@ module.exports = NodeHelper.create({
 			Log.info(`Station ${payload.stationID}, timezone ${payload.timezone}`);
 			this.cycle = createFetchCycle({
 				timezone: payload.timezone,
-				fetchData: (nowMs) => fetchTides(this.settings, nowMs),
+				fetchData: createTideSource(this.settings),
 				send: (name, data) => this.sendResult(name, data),
 				log: Log
 			});

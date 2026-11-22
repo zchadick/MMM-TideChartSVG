@@ -1,0 +1,29 @@
+{
+  "count": 1,
+  "units": null,
+  "stations": [
+    {
+      "state": "WA",
+      "tidepredoffsets": {
+        "self": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/9445882/tidepredoffsets.json"
+      },
+      "type": "S",
+      "timemeridian": -120,
+      "reference_id": "9447130",
+      "timezonecorr": -8,
+      "id": "9445882",
+      "name": "Eagle Harbor, Bainbridge Island",
+      "lat": 47.62,
+      "lng": -122.515,
+      "affiliations": "",
+      "portscode": "",
+      "products": null,
+      "disclaimers": null,
+      "notices": null,
+      "self": null,
+      "expand": null,
+      "tideType": ""
+    }
+  ],
+  "self": null
+}
