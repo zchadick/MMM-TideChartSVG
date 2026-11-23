@@ -5,7 +5,7 @@ const assert = require("node:assert/strict");
 const path = require("node:path");
 const fs = require("node:fs");
 const ChartSvg = require("../lib/chartSvg.js");
-const { parsePredictions } = require("../lib/noaa.js");
+const { parsePredictions, parseObservations } = require("../lib/noaa.js");
 
 function fixture (name) {
 	return parsePredictions(JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", name), "utf8")));
@@ -200,4 +200,107 @@ test("past width follows now and stays inside the plot", () => {
 	assert.equal(ChartSvg.pastWidth(scale, DATA.start - 1000), 0);
 	assert.equal(ChartSvg.pastWidth(scale, DATA.mid), 178);
 	assert.equal(ChartSvg.pastWidth(scale, DATA.end + 1000), 356);
+});
+
+// --- Observed water level ----------------------------------------------------
+
+// Bremerton's real readings for the same window, up to Mon 23:00 PST (Nov 10, 07:00 UTC). The water ran
+// about a foot above the predictions.
+const OBS = parseObservations(JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "obs-9445958.json"), "utf8")));
+const MIN = 60 * 1000;
+
+test("shown highs/lows: observed once clear, predicted otherwise", () => {
+	const shown = ChartSvg.shownExtremes(DATA.hilo, OBS);
+	assert.equal(shown.length, DATA.hilo.length);
+	// Monday's three highs/lows are observed: own time and height, NOAA's kept in `predicted`.
+	assert.deepEqual(shown.slice(0, 3).map((p) => [new Date(p.t).toISOString(), p.v, p.type]), [
+		["2026-11-09T13:36:00.000Z", 12.608, "H"],
+		["2026-11-09T18:54:00.000Z", 7.651, "L"],
+		["2026-11-10T00:18:00.000Z", 11.834, "H"]
+	]);
+	assert.deepEqual(shown[0].predicted, { t: DATA.hilo[0].t, v: DATA.hilo[0].v });
+	// 07:03 UTC low: the readings end at 07:00, still falling, so it stays predicted; and so does everything later.
+	assert.deepEqual(shown.slice(3), DATA.hilo.slice(3));
+	assert.equal(ChartSvg.shownExtremes(DATA.hilo, []), DATA.hilo);
+});
+
+test("shown highs/lows: an observed high needs 30 minutes of readings after it", () => {
+	const high = DATA.hilo[0]; // 13:44 UTC
+	const upTo = (end) => OBS.filter((p) => p.t <= end);
+	const observedPeak = Date.parse("2026-11-09T13:36:00Z");
+	assert.equal(ChartSvg.shownExtremes([high], upTo(observedPeak + 24 * MIN))[0], high);
+	assert.equal(ChartSvg.shownExtremes([high], upTo(observedPeak + 30 * MIN))[0].t, observedPeak);
+});
+
+test("shown highs/lows: no observed value when the highest reading is at the end of the search (no turn yet)", () => {
+	const high = DATA.hilo[0];
+	const rising = [];
+	for (let t = high.t - 90 * MIN; t <= high.t + 90 * MIN; t += 6 * MIN) rising.push({ t, v: (t - high.t) / MIN });
+	assert.equal(ChartSvg.shownExtremes([high], rising)[0], high);
+});
+
+test("the observed line is one path; empty when there are no observations", () => {
+	const { svg } = ChartSvg.buildChart({ ...DATA, observations: OBS }, OPTS);
+	const d = /class="tide-observed" d="([^"]*)"/.exec(svg)[1];
+	assert.equal(count(d, /[ML]/g), OBS.length);
+	assert.equal(count(svg, /class="tide-observed"/g), 1);
+	assert.match(ChartSvg.buildChart(DATA, OPTS).svg, /class="tide-observed" d=""/);
+	assert.equal(ChartSvg.observedPath(null, []), "");
+});
+
+test("the height range covers the observations", () => {
+	const high = OBS.map((p) => ({ ...p, v: p.v + 10 }));
+	const { scale } = ChartSvg.buildChart({ ...DATA, observations: high }, OPTS);
+	assert.equal(scale.max, Math.max(...high.map((p) => p.v)));
+});
+
+test("an observed high/low gets a dotted connector to the predicted one, and its label goes outside both", () => {
+	const shown = ChartSvg.shownExtremes(DATA.hilo, OBS);
+	const { svg, scale } = ChartSvg.buildChart({ ...DATA, hilo: shown, observations: OBS }, OPTS);
+	assert.equal(count(svg, /class="tide-connector"/g), 3);
+	const y = (v) => ChartSvg.yOf(scale, v);
+	const labelLine2 = (t) => Number(new RegExp(`data-t="${t}" text-anchor="middle"><tspan[^>]*>[^<]*<\/tspan><tspan class="tide-label-height" x="[0-9.]+" y="([0-9.-]+)"`).exec(svg)[1]);
+
+	// 13:36 high, observed 12.6 above predicted 11.6: label above the observed point.
+	assert.ok(Math.abs(labelLine2(shown[0].t) - (y(12.608) - 6)) < 0.1);
+	// 18:54 low, observed 7.7 above predicted 7.0: label below the predicted (lower) point.
+	assert.ok(Math.abs(labelLine2(shown[1].t) - (y(7.015) + 30)) < 0.1);
+	assert.match(svg, /class="tide-label-height"[^>]*>12\.6 ft</);
+	const connector = /class="tide-connector" x1="([\d.]+)" y1="([\d.]+)" x2="([\d.]+)" y2="([\d.]+)"/.exec(svg).slice(1).map(Number);
+	assert.ok(Math.abs(connector[0] - ChartSvg.xOf(scale, DATA.hilo[0].t)) < 0.1);
+	assert.ok(Math.abs(connector[1] - y(DATA.hilo[0].v)) < 0.1);
+	assert.ok(Math.abs(connector[3] - y(12.608)) < 0.1);
+});
+
+test("a high observed below its prediction is labeled above the predicted point", () => {
+	const high = { ...DATA.hilo[0], v: 10, predicted: { t: DATA.hilo[0].t, v: 11.557 } };
+	const { svg, scale } = ChartSvg.buildChart({ ...DATA, hilo: [high] }, OPTS);
+	const line2 = Number(/<tspan class="tide-label-height" x="[\d.]+" y="([\d.-]+)"/.exec(svg)[1]);
+	assert.ok(Math.abs(line2 - (ChartSvg.yOf(scale, 11.557) - 6)) < 0.1);
+});
+
+test("badges follow the shown (observed) value", () => {
+	const shown = ChartSvg.shownExtremes(DATA.hilo, OBS);
+	// Predicted 11.557 is inside [-3, 12]; observed 12.608 is above it.
+	const { svg } = ChartSvg.buildChart({ ...DATA, hilo: shown }, { ...OPTS, extremeRange: [-3, 12] });
+	assert.match(svg, new RegExp(`class="tide-badge tide-badge-high" data-t="${shown[0].t}"`));
+});
+
+test("overlay: the current value is the latest observation if under an hour old, else the prediction", () => {
+	const { scale } = ChartSvg.buildChart(DATA, OPTS);
+	const now = Date.parse("2026-11-09T15:00:00Z");
+	const predicted = ChartSvg.overlayState(scale, DATA.curve, now, "english");
+	const fresh = ChartSvg.overlayState(scale, DATA.curve, now, "english", { t: now - 20 * MIN, v: 12.34 });
+	assert.equal(fresh.value, 12.34);
+	assert.equal(fresh.label, "↓ 12.3 ft"); // the arrow still follows the predicted curve (falling here)
+	assert.ok(Math.abs(fresh.y - ChartSvg.yOf(scale, 12.34)) < 1e-9);
+	const old = ChartSvg.overlayState(scale, DATA.curve, now, "english", { t: now - 61 * MIN, v: 12.34 });
+	assert.equal(old.value, predicted.value);
+});
+
+test("note when the latest observation is more than 6 hours old", () => {
+	const latest = Date.parse("2026-11-09T16:12:00Z"); // Mon 08:12 PST
+	assert.equal(ChartSvg.observationNote(latest, latest + 6 * 60 * MIN, LA), "");
+	assert.equal(ChartSvg.observationNote(latest, latest + 6 * 60 * MIN + 1, LA), "Observations not updated since Mon 08:12");
+	assert.equal(ChartSvg.observationNote(null, latest, LA), "");
 });

@@ -2,7 +2,8 @@
 
 A [MagicMirror²](https://github.com/MagicMirrorOrg/MagicMirror) module that shows a tide chart
 for one NOAA station, covering today and tomorrow (local time). High and low tides are labeled
-with their time and height, and a marker shows the current time and tide level.
+with their time and height, the water level NOAA has measured so far is drawn over the
+predicted curve, and a marker shows the current time and water level.
 
 The chart is drawn as a lightweight SVG with no charting library, so it runs well on small
 hardware such as a Raspberry Pi 3B+.
@@ -13,8 +14,17 @@ hardware such as a Raspberry Pi 3B+.
 
 - **The tide curve** for today and tomorrow, with the hours already gone greyed out.
 - **Highs and lows**, labeled with their time (24-hour) and height.
-- **Now:** a vertical line and a dot on the curve, with the current height and whether the tide
-  is rising (↑) or falling (↓).
+- **Observed water level:** a thicker grey line showing what NOAA's gauge has measured since
+  the start of today. Weather (wind, air pressure, river flow) often pushes the real water a
+  foot or more above or below the prediction, and this line shows by how much.
+- **Observed highs and lows:** once a high or low has passed and the readings show the water
+  has turned (at least 30 minutes after the highest or lowest reading), its label shows the
+  observed time and height instead of the predicted ones. A faint dotted line joins the
+  predicted point to the observed one, and the label sits outside both: above the higher point
+  for a high, below the lower one for a low.
+- **Now:** a vertical line and a dot, with the current height and whether the tide is rising
+  (↑) or falling (↓). The height is the latest observed reading when it is less than an hour
+  old, otherwise the predicted height. The arrow follows the predicted curve.
 - **A height scale** on the left, labeled with what it measures (e.g. "Height above MLLW (ft)"),
   a line at 0, and a faint grid.
 - **Shading under the curve:** blue, fading toward the bottom. If you set `meanSeaLevel`, a
@@ -41,6 +51,14 @@ Predictions are fetched at the same time and again at 00:01 local time each day.
 fails, the module keeps the last chart, shows "(latest update failed)", and retries every hour.
 If the station record has no name, the header shows the station ID.
 
+Observed water levels come from the same API (NOAA's 6-minute readings, which appear about
+5 minutes after they're measured). They're fetched at startup and then every 15 minutes
+(`observationInterval`); each fetch covers today from 00:00 to now. These are NOAA's
+preliminary readings, not yet checked. If a fetch fails, the module keeps the line it has and
+tries again at the next interval, without showing an error. If the latest reading is more than
+6 hours old, a note under the chart says so (e.g. "Observations not updated since Mon 08:12").
+A station without a water level gauge simply shows no observed line.
+
 ### Subordinate stations
 
 Some NOAA stations, such as Eagle Harbor, Bainbridge Island (`9445882`), are *subordinate*
@@ -53,7 +71,9 @@ For a subordinate station the module:
 
 - labels the station's own highs and lows, as NOAA publishes them;
 - draws the curve from the reference station's curve, with the same corrections applied;
-- adds an asterisk to the header (whatever the header text) to show the curve is modeled.
+- adds an asterisk to the header (whatever the header text) to show the curve is modeled;
+- draws the reference station's observed water level with the same corrections (subordinate
+  stations have no gauge of their own), so the observed line is modeled too.
 
 The modeled curve passes through NOAA's published highs and lows. Between them, it is an
 estimate:
@@ -95,7 +115,8 @@ Add the module to `config/config.js`:
     stationID: "9445958", // Bremerton, WA
     timezone: "America/Los_Angeles",
     meanSeaLevel: 6.78,
-    extremeRange: [-3.0, 13.0]
+    extremeRange: [-3.0, 13.0],
+    observationInterval: 15 * 60 * 1000 // the default; shown as an example
   }
 }
 ```
@@ -113,15 +134,21 @@ Add the module to `config/config.js`:
 | `width` | `400` | Chart width in pixels. |
 | `height` | `400` | Chart height in pixels. |
 | `overlayUpdateInterval` | `60000` | How often the current-time marker moves, in milliseconds. |
+| `observationInterval` | `900000` (15 min) | How often the observed water level is fetched, in milliseconds. At least `360000` (6 minutes): NOAA publishes a reading every 6 minutes, so fetching more often gets nothing new. At the default 400 px width, each pixel is about 8 minutes, so 15 minutes leaves at most a 2–3 px gap before the current-time line. |
 
 The height scale always includes 0 (and `meanSeaLevel` when set), so the zero line is always on
-the chart.
+the chart. It also stretches to fit the observed water level and the observed highs and lows,
+so nothing is cut off when the water goes above or below the predicted range.
 
 ## Limitations
 
 - **One station per mirror.** Only the first instance's station is used. A second instance
   with a different station shows "Only one tide station per mirror is supported."
-- Heights are NOAA's predictions only. They don't include weather effects such as storm surge.
+- **The predicted curve doesn't include weather** (storm surge, wind, air pressure, river
+  flow). The observed line shows how far the real water has differed so far today, but
+  nothing on the chart forecasts it.
+- **Observed water levels are NOAA's preliminary readings,** shown as they come in. NOAA may
+  correct them later. They can't be turned off. A station without a gauge shows none.
 - **Subordinate stations:** the curve between highs and lows is modeled (see
   [Subordinate stations](#subordinate-stations)), and only `datum: "MLLW"` works, since NOAA
   publishes their predictions only on MLLW. Any other datum shows an error saying so.

@@ -2,7 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { createFetchCycle, RETRY_MS } = require("../lib/fetchCycle.js");
+const { createFetchCycle, createRepeatingCycle, RETRY_MS } = require("../lib/fetchCycle.js");
 
 const LA = "America/Los_Angeles";
 
@@ -80,6 +80,63 @@ test("stop clears the pending timer and nothing more is scheduled", async () => 
 	const { clock, cycle } = setup("2026-11-09T23:30:00Z", ["first"]);
 	await cycle.start();
 	assert.ok(clock.pending);
+	cycle.stop();
+	assert.equal(clock.pending, null);
+	assert.equal(clock.cleared, 1);
+});
+
+// --- Observed water level: a fixed interval -----------------------------------
+
+const FIFTEEN_MIN = 15 * 60 * 1000;
+
+function setupRepeating (outcomes) {
+	const clock = fakeTimers(Date.parse("2026-11-09T20:00:00Z"));
+	const sent = [];
+	const logged = [];
+	const log = { info: (m) => logged.push(`info: ${m}`), warn: (m) => logged.push(`warn: ${m}`), error: (m) => logged.push(`error: ${m}`) };
+	const cycle = createRepeatingCycle({
+		intervalMs: FIFTEEN_MIN,
+		notification: "TIDE_OBSERVATIONS",
+		label: "Observed water level",
+		now: () => clock.now,
+		setTimer: clock.setTimer,
+		clearTimer: clock.clearTimer,
+		log,
+		send: (name, data) => sent.push({ name, data }),
+		fetchData: async () => {
+			const outcome = outcomes.shift();
+			if (outcome instanceof Error) throw outcome;
+			return { ok: outcome };
+		}
+	});
+	return { clock, sent, logged, cycle };
+}
+
+test("observations: fetched at start, then every interval", async () => {
+	const { clock, sent, cycle } = setupRepeating(["a", "b"]);
+	await cycle.start();
+	assert.deepEqual(sent, [{ name: "TIDE_OBSERVATIONS", data: { ok: "a" } }]);
+	assert.equal(clock.pending.delay, FIFTEEN_MIN);
+	await clock.fire();
+	assert.equal(sent.length, 2);
+	assert.equal(clock.pending.delay, FIFTEEN_MIN);
+});
+
+test("observations: a failure sends nothing, keeps the interval, and logs only when it starts and ends", async () => {
+	const { clock, sent, logged, cycle } = setupRepeating([new Error("no sensor"), new Error("no sensor"), "back"]);
+	await cycle.start();
+	await clock.fire();
+	assert.deepEqual(sent, []);
+	assert.equal(clock.pending.delay, FIFTEEN_MIN);
+	assert.deepEqual(logged, ["warn: Observed water level unavailable, retrying every 15 min: no sensor"]);
+	await clock.fire();
+	assert.equal(sent.length, 1);
+	assert.deepEqual(logged.slice(1), ["info: Observed water level: working again"]);
+});
+
+test("observations: stop clears the pending timer", async () => {
+	const { clock, cycle } = setupRepeating(["a"]);
+	await cycle.start();
 	cycle.stop();
 	assert.equal(clock.pending, null);
 	assert.equal(clock.cleared, 1);

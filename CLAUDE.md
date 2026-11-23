@@ -2,7 +2,8 @@
 
 A MagicMirror² module that shows a tide chart for one NOAA station, covering today and
 tomorrow (local time), drawn as an SVG. High and low tides are labeled with their time and
-height, and an overlay marks the current time and tide level.
+height, the observed water level is drawn over the predicted curve, and an overlay marks the
+current time and water level.
 
 The repo is public. Machine-specific notes live in a git-ignored `CLAUDE.local.md`.
 
@@ -48,6 +49,9 @@ The repo is public. Machine-specific notes live in a git-ignored `CLAUDE.local.m
   - Build the full chart only when new data arrives, never on a timer.
   - The overlay (current-time line, current level) redraws on its own config interval and
     updates only its own elements in place, never the whole chart.
+  - New observations (every `observationInterval`) only change the observed line's `d` in
+    place. The whole chart is rebuilt only when they change the height range or a labeled
+    high/low (a few times a day).
   - Keep the number of DOM and SVG nodes small. Use a single path for the tide curve, not
     one element per data point.
   - No heavy dependencies: no charting libraries (no Chart.js), and add only npm packages
@@ -78,9 +82,12 @@ it takes an IANA name.
   `low` or above `high` is extreme.
 - `width`, `height`: chart size in px (default 400 × 400)
 - `overlayUpdateInterval`: how often the current-time overlay redraws (default 60 s, in ms)
+- `observationInterval`: how often the observed water level is fetched (default 15 min, in
+  ms; at least 6 min, since NOAA publishes every 6 min). Observations are always on (no
+  switch; see Rejected ideas).
 
-The page checks the types of `meanSeaLevel`, `gridStep` and `extremeRange` and shows a
-message instead of the chart if one is wrong.
+The page checks the types of `meanSeaLevel`, `gridStep`, `extremeRange` and
+`observationInterval` and shows a message instead of the chart if one is wrong.
 
 ## Design constraint: one station
 
@@ -109,6 +116,9 @@ keep them in sync.
 - **Unsupported, with descriptive errors:** "A" (added-feet) height offsets; a `datum` other
   than MLLW. These retry hourly like any other error.
 - **Header:** `*` after whatever header is shown (NOAA name, `stationName` or `header`).
+- **Observed water level:** subordinate stations have no gauge. The reference station's
+  observations get the same corrections as the curve (`correctPoints`), with the reference
+  station's highs/lows fetched alongside each time. Modeled, not measured.
 
 ## Testing
 
@@ -124,13 +134,24 @@ needed.
   works). Fixtures in `tests/fixtures/` are real responses: 9445958 (Nov 9–10, 2026, Pacific,
   plus station metadata and offsets); 9445882 (Nov 22–23, 2026: highs/lows, station metadata,
   offsets) and its reference 9447130 (curve and highs/lows, Nov 21–24 UTC with the day margin).
+  Observations: `obs-9445958.json` (Nov 9 08:00 → Nov 10 07:00 UTC, i.e. the Mon–Tue window up
+  to Mon 23:00 PST), `obs-9447130.json` (Nov 21 08:00 → Nov 22 20:00 UTC, the reference
+  station's readings with the day margin), `obs-error.json` (NOAA's answer for a station
+  without a gauge). Also covered: the observation URL and parsing, both station types'
+  observation fetch, and one shared startup step for both cycles.
 - `subordinate.test.js`: corrections at highs and lows, blend by time, window edges, failure
-  when the reference data doesn't cover the window, and ±3-hour offsets with the real data.
-- `fetchCycle.test.js`: fetch at start, 00:01 schedule, hourly retry, stop; fake clock and timers.
+  when the reference data doesn't cover the window, ±3-hour offsets with the real data, and
+  `correctPoints` on points that don't cover the window (observations).
+- `fetchCycle.test.js`: fetch at start, 00:01 schedule, hourly retry, stop; the observation
+  cycle (fixed interval, failures send nothing and log only when they start and end); fake
+  clock and timers.
 - `chartSvg.test.js`: SVG markup (element count, prefixed ids, gutter), height range always
   including 0 and MSL, axis title, grid steps (default and configured, ft and m), shading with
   and without MSL, past/future split, labels, extreme badges (strict bounds), x-axis labels,
-  and overlay placement, interpolation and past width.
+  and overlay placement, interpolation and past width. Observations: which highs/lows become
+  observed (30-minute rule, no turn yet), the observed path, range stretching, connectors and
+  outer label placement, badges on observed values, the current value (fresh vs. over an
+  hour old), and the 6-hour note.
 
 `node_helper.js` and `MMM-TideChartSVG.js` are thin and need MagicMirror itself; they're
 checked by the manual test.
@@ -140,9 +161,12 @@ Check the module's log lines in the server output. Stop the server when done.
 
 ## Data source
 
-NOAA CO-OPS Tides & Currents data API (`api.tidesandcurrents.noaa.gov/api/prod/datagetter`),
-tide predictions. Requests use UTC (`time_zone=gmt`); times are converted to the configured
-timezone only for display.
+NOAA CO-OPS Tides & Currents data API (`api.tidesandcurrents.noaa.gov/api/prod/datagetter`):
+tide predictions (`product=predictions`) and observed water level (`product=water_level`,
+6-minute preliminary readings, ~5 min behind; `{ data: [{ t, v, s, f, q }] }`, `v` may be
+empty; a station without a gauge answers with an error such as "There is no MLLW for the
+station"). Requests use UTC (`time_zone=gmt`); times are converted to the configured timezone
+only for display.
 
 Station metadata API, fetched once at startup (both required; until they work, the error
 shows and the whole step retries hourly with the fetch):
@@ -162,30 +186,43 @@ Other station reference data on the same API (not used by the module):
 ## Architecture
 
 - `node_helper.js`: Node side, thin. The first `REGISTER` (stationID, timezone, units,
-  datum; the page fills in the default timezone) starts the fetch cycle; later
-  registrations get the latest result right away. Results are tagged with `stationID`.
-- `lib/fetchCycle.js`: fetch at start; after a success, again at the next 00:01 local time;
-  after a failure, every hour until it works. Sends `TIDE_DATA` or `TIDE_ERROR`.
+  datum, observationInterval; the page fills in the default timezone) starts both fetch
+  cycles, which share one startup step (`createStationLoader`); later registrations get the
+  latest results right away. Results are tagged with `stationID`.
+- `lib/fetchCycle.js`: `createFetchCycle` (predictions): fetch at start; after a success,
+  again at the next 00:01 local time; after a failure, every hour until it works. Sends
+  `TIDE_DATA` or `TIDE_ERROR`. `createRepeatingCycle` (observations): fetch at start, then
+  every interval; sends `TIDE_OBSERVATIONS` on success, nothing on failure, and logs only
+  when failures start and end.
 - `lib/noaa.js`: builds the two requests (6-minute curve and `interval=hilo`) over the
   window, in UTC, and parses them into `{ t: UTC ms, v, type? }`. `fetchStation` is the
   startup step (name and offsets); `createTideSource` runs it on the first fetch (and each
   fetch until it works), keeps the result, and then makes only the daily requests. For a
   subordinate station the daily fetch is its own highs/lows plus the reference station's
   curve and highs/lows with a day's margin on each side; the result has `modeled: true`.
+  `fetchObservations`: readings from the window's start to now (subordinate: the reference
+  station's from a day earlier, corrected and trimmed). `createStationLoader` keeps the
+  startup step's result and shares one in-flight request between both cycles.
   NOAA reports problems as `{ error: { message } }`, often with HTTP 200.
-- `lib/subordinate.js`: models a subordinate station's curve from the reference station's
-  (pure); trims it to the window.
+- `lib/subordinate.js`: `correctPoints` applies the corrections to any of the reference
+  station's points (curve or observations); `modelCurve` uses it and trims to the window
+  (pure).
 - `lib/tideTime.js`: timezone math with `Intl` (window, next 00:01, labels). Shared by Node
   and the page (UMD-style: `module.exports` or a `TideTime` global).
 - `lib/chartSvg.js`: builds the SVG markup string and the overlay positions (pure; shared
-  the same way as `ChartSvg`).
+  the same way as `ChartSvg`). Also `shownExtremes` (which highs/lows are observed),
+  `observedPath` (the observed line's `d`) and `observationNote` (the 6-hour note).
 - `MMM-TideChartSVG.js`: browser side. `getDom` builds the wrapper once and always returns
   it. New data: markup is parsed off-screen in a `<template>` and swapped in with one
   `replaceChildren`, so the chart never disappears. `updateDom` is called only when the
   header (station name, or the `*` for a modeled curve) changes; since `getDom` returns the same wrapper, the chart isn't
   rebuilt. Data that arrives before `getDom` is kept and drawn when the wrapper exists. The
-  overlay timer moves the now-line, dot and label, moves the past/future clip edge, and
-  toggles `tide-past` on every element with a `data-t` (highs/lows, badges, hour labels).
+  overlay timer moves the now-line, dot and label, moves the past/future clip edge,
+  toggles `tide-past` on every element with a `data-t` (highs/lows, badges, hour labels),
+  and updates the note about old observations. `render` builds the chart from the latest
+  predictions and observations; for new observations alone it only replaces the observed
+  path's `d`, unless the shown highs/lows or the height range changed (then it rebuilds).
+  The status line shows an error/loading message and the observation note together.
 - **Don't overwrite MagicMirror's module properties** (e.g. `this.data`, which holds the
   module's position and header; overwriting it kept the module off screen).
 - `MMM-TideChartSVG.css`: all colors. Standard MagicMirror greys and whites; blue `#7fa7c9`
@@ -201,7 +238,9 @@ Other station reference data on the same API (not used by the module):
   the curve is modeled (subordinate stations).
 - **Layout:** a 44 px left gutter (height numbers at each grid line, rotated title "Height
   above <datum> (<unit>)"), the plot, and a 20 px x-axis row at the bottom.
-- **Height range:** always includes 0 and `meanSeaLevel`; the 0 line is always drawn.
+- **Height range:** always includes 0 and `meanSeaLevel`; the 0 line is always drawn. It
+  also covers the observed readings and the shown and predicted highs/lows (it stretches;
+  nothing is clipped).
 - **Grid:** very faint, at every `gridStep` and every 6 hours.
 - **Shading:** without MSL, blue fading toward the bottom. With MSL, only between the curve
   and the MSL line: blue above, sand below, fading toward the line; dashed MSL line labeled
@@ -210,14 +249,26 @@ Other station reference data on the same API (not used by the module):
   labels and hour labels grey.
 - **High/low labels:** time (24-hour, e.g. `15:42`) and height to one decimal place
   (e.g. `7.2 ft`): time in light grey, height in blue.
+- **Observed water level:** a grey line (`#777`, 3 px), lighter and thicker than the past
+  curve, from the window's start to the latest reading.
+- **Observed highs/lows:** a past high/low shows the observed extreme (its own time and
+  height) once it is clear: the highest/lowest reading within ±90 min of the predicted time,
+  not at either end of those readings, and the latest reading ≥ 30 min after it. Otherwise
+  the prediction. A faint dotted connector (`#999`, 1 px, `1 3`, 70% opacity) joins the
+  predicted point to the observed one; highs are labeled above the higher point, lows below
+  the lower one. Badge rules apply to the shown value.
 - **Extreme tides:** the label sits on a badge, red for highs and purple for lows; once in
   the past, the badge becomes an outline. Badge width is estimated from the text length.
 - **X-axis:** one row; the day name starts each day, then `06`, `12`, `18` under short
   ticks; a taller tick and a dashed divider at midnight.
-- **Overlay:** a vertical line at the current time, a blue dot with a white outline on the
-  curve, and the current height with a rising or falling arrow.
+- **Overlay:** a vertical line at the current time, a blue dot with a white outline, and the
+  current height with a rising or falling arrow. The height (and the dot) is the latest
+  observation if it is under an hour old, otherwise the predicted curve's; the arrow follows
+  the predicted curve.
 - **Errors:** an error before any data shows the error message; after data has loaded, a
-  failed update keeps the last chart and adds "(latest update failed)".
+  failed update keeps the last chart and adds "(latest update failed)". Failed observation
+  fetches are silent; when the latest observation is over 6 hours old the status line adds
+  "Observations not updated since <day> <HH:MM>".
 
 ## Open work
 
@@ -225,55 +276,41 @@ To decide once real data can be compared:
 - **Curve resolution:** 6-minute predictions vs. hourly vs. curve from high/low only.
 - **Datum:** which height baseline to display (MLLW is NOAA's default for predictions).
 
-Decided, to be built in two pull requests (1: observed water level; 2: ETSS surge):
+ETSS surge forecast (decided; the second pull request, after observed water level):
 
-- **Goal:** plot the observed water level (6-minute CO-OPS `water_level`) and, when a threshold
-  is met, an ETSS surge-adjusted forecast over the predicted (astronomical) curve.
-- **Layers:** the base (axes, labels, shading, predicted curve) is still built once a day.
-  Observed and ETSS are one path each, in the same `<svg>`, updated in place by changing `d`.
-  Split them into stacked SVGs only if the Pi shows a performance problem. At midnight both
-  are redrawn against the new window. The height range also includes the observed and ETSS
-  values (curves and shown highs/lows); when a refresh changes the range or the shown
-  highs/lows, the whole chart is rebuilt (rare).
-- **Observed refresh:** `observationInterval`, default 15 min, minimum 6 min (NOAA publishes
-  every 6 min, ~5 min behind). Each fetch covers the window start to now (≤ 480 points,
-  ~40 KB). At ~8 min per pixel (356 px plot), the gap to the now-line stays ≤ ~2.5 px. On
-  failure: keep the last line, retry next interval. A note shows when the newest observation
-  is more than 6 hours old. Always on (no switch).
-- **Current value:** the overlay shows the latest observation if it's under 1 hour old,
-  otherwise the predicted value; the arrow follows the predicted curve.
-- **High/low labels:** a past high/low shows the observed extreme (its own time and height,
-  within ±90 min of the predicted time) once the latest reading is ≥ 30 min past it. Until
-  then, and for upcoming ones, the ETSS extreme when ETSS is shown, with `*` right after the
-  number (`12.4* ft`); otherwise the prediction. Badge rules apply to the shown value. Where
-  the shown value differs from the prediction, a faint dotted connector joins the two, and
-  highs are labeled above the higher point, lows below the lower one.
-- **Appearance:** observed = grey line, thicker than the past curve (`#777`, 3 px); ETSS =
-  muted red dashed line (`#b86b6b`, 1.75 px, `5 4`) from now on; connector `#999`, 1 px,
-  dotted `1 3`, 70% opacity.
-- **Subordinate stations:** observations are the reference station's, transformed with the
-  same corrections (modeled, not measured). ETSS: the station nearest the *reference*
-  station; the reference's ETSS-adjusted curve then goes through the corrections (the height
-  ratio scales the surge too).
-- **ETSS source:** ETSS 2.0 (`slosh.nws.noaa.gov/etsurge2.0/`): station list
+- **Goal:** when a threshold is met, plot an ETSS (NWS Extra-Tropical Storm Surge)
+  surge-adjusted forecast over the predicted curve.
+- **Layer:** one path in the same `<svg>`, updated in place like the observed line; redrawn
+  at midnight. The height range also covers it (and its shown highs/lows).
+- **Appearance:** muted red dashed line (`#b86b6b`, 1.75 px, `5 4`) from now to the end of the
+  window. Upcoming highs/lows (and past ones not yet observed) show the ETSS curve's extreme
+  with `*` right after the number (`12.4* ft`), plus the same dotted connector and outer label
+  placement as observed ones. Badge rules apply to the shown value. Without ETSS they show
+  the prediction. The `*` reuse alongside the header's modeled `*` is accepted.
+- **Source:** ETSS 2.0 (`slosh.nws.noaa.gov/etsurge2.0/`): station list
   `datafiles/master.csv` (NOAA ID, lat/lon, datums, `Obs?`, `Tide?`), fetched once at
   startup; data via POST `fixed/php/getData.php` with `st=<NOAA id>` (JSON arrays `ts`, `pred`,
-  `ss`, `anom`, `obs`, `twl`; 6-minute timestamps, `ss`/`twl` hourly; 9999 = missing; feet).
-  Both are undocumented web-page backends, so ETSS is optional and its failures are silent.
-  Refresh every 3 hours (model runs 00/06/12/18Z, arriving a few hours late).
-- **ETSS curve:** offset(t) = ETSS total − ETSS tide (hourly), interpolated between hours and
-  added to the 6-minute prediction. Datum-independent.
-- **ETSS station:** nearest ETSS station with both `Obs?` and `Tide?`, with an `etssStation`
-  override. Nearest-only fails: for Bremerton it picks the Shilshole GPS buoy (no tide) or
-  Wauna (no obs, different basin); the rule picks Seattle 9447130 for Bremerton and Eagle
-  Harbor.
-- **ETSS threshold:** `etssThreshold`, in chart units; unset = the whole ETSS step is skipped.
-  Show the ETSS line if, at any predicted high or low still ahead in the window,
-  |ETSS curve − prediction| ≥ threshold (lows too: shows when a predicted very low tide won't
-  happen). Checked on each ETSS fetch and at the daily refresh. README must suggest values:
-  Seattle Nov 2025–Nov 2026 observed-minus-predicted at highs had median +0.38 ft, p95
-  +0.95 ft; a 2-day window had a high off by ≥ 0.5 ft 67% of the time, ≥ 1 ft 13%, ≥ 1.5 ft
-  2%, ≥ 2 ft 1%.
+  `ss`, `anom`, `obs`, `twl`; 6-minute timestamps, `ss`/`twl` hourly; 9999 = missing; feet,
+  converted for metric). Both are undocumented web-page backends, so ETSS is optional and its
+  failures are silent. Refresh every 3 hours (model runs 00/06/12/18Z, arriving a few hours
+  late).
+- **Curve:** offset(t) = ETSS total − ETSS tide (hourly), interpolated between hours and added
+  to the 6-minute prediction. Datum-independent.
+- **Station:** the nearest ETSS station with both `Obs?` and `Tide?` (straight-line distance
+  from the station metadata's lat/lon), with an `etssStation` override (NOAA ID).
+  Nearest-only fails: for Bremerton it picks the Shilshole GPS buoy (no tide) or Wauna (no
+  obs, different basin); the rule picks Seattle 9447130 for Bremerton and Eagle Harbor.
+- **Subordinate stations:** the ETSS station nearest the *reference* station; the
+  reference's ETSS-adjusted curve then goes through the corrections (the height ratio scales
+  the surge too).
+- **Threshold:** `etssThreshold`, in chart units; unset = the whole ETSS step is skipped (no
+  station list, no fetches). Show the ETSS line if, at any predicted high or low still ahead
+  in the window, |ETSS curve − prediction| ≥ threshold (lows too: shows when a predicted very
+  low tide won't happen). Checked on each ETSS fetch and at the daily refresh. README must
+  explain it and suggest values: Seattle Nov 2025–Nov 2026 observed-minus-predicted at highs
+  had median +0.38 ft, p95 +0.95 ft; a 2-day window had a high off by ≥ 0.5 ft 67% of the
+  time, ≥ 1 ft 13%, ≥ 1.5 ft 2%, ≥ 2 ft 1%.
+- **Screenshot:** retake `screenshot.png` with this pull request (covers observations too).
 
 ## Rejected ideas
 

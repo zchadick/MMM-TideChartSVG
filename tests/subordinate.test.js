@@ -4,7 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 const fs = require("node:fs");
-const { modelCurve } = require("../lib/subordinate.js");
+const { modelCurve, correctPoints } = require("../lib/subordinate.js");
 const noaa = require("../lib/noaa.js");
 
 const H = 60 * 60 * 1000;
@@ -72,4 +72,13 @@ test("with Seattle's real data, the one-day margin covers the window even for 3-
 		assert.equal(curve[0].t, start);
 		assert.equal(curve[curve.length - 1].t, end);
 	}
+});
+
+test("correctPoints corrects any points (e.g. observations), without needing them to cover a window", () => {
+	const observed = [{ t: 0, v: 11 }, { t: 3 * H, v: 7 }]; // up to "now", 3 h in
+	const corrected = correctPoints(observed, HILO, OFFSETS);
+	assert.deepEqual(corrected[0], { t: 10 * MIN, v: 11 }); // at the high: +10 min, ×1
+	assert.equal(corrected[1].t, 3 * H + 20 * MIN); // halfway to the low: +20 min, ×1.5
+	assert.ok(Math.abs(corrected[1].v - 10.5) < 1e-9);
+	assert.deepEqual(correctPoints([{ t: 13 * H, v: 5 }], HILO, OFFSETS), []); // after the last high/low: dropped
 });

@@ -3,7 +3,9 @@
 /* MMM-TideChartSVG: browser side.
  * Draws the chart as an inline SVG. New data is built off-screen and swapped in with one replace, so the
  * chart never disappears. After the first draw the module calls updateDom only when the station name
- * (the header) changes; otherwise only the overlay changes, on its own interval.
+ * (the header) changes; otherwise only the overlay changes, on its own interval. New observations only
+ * change the observed line, unless they change the height range or a labeled high/low (then the chart is
+ * rebuilt).
  */
 Module.register("MMM-TideChartSVG", {
 	defaults: {
@@ -17,7 +19,8 @@ Module.register("MMM-TideChartSVG", {
 		extremeRange: null, // [low, high]: tides below low or above high get a badge; null = off
 		width: 400,
 		height: 400,
-		overlayUpdateInterval: 60 * 1000
+		overlayUpdateInterval: 60 * 1000,
+		observationInterval: 15 * 60 * 1000 // how often the observed water level is fetched; at least 6 minutes
 	},
 
 	getScripts () {
@@ -37,12 +40,17 @@ Module.register("MMM-TideChartSVG", {
 
 	start () {
 		this.tides = null;
+		this.observations = [];
+		this.latestObservedAt = null;
 		this.scale = null;
+		this.chartKey = null;
 		this.overlay = null;
 		this.overlayTimer = null;
 		this.stationName = null;
 		this.modeled = false;
-		this.pending = null;
+		this.pending = [];
+		this.statusText = "";
+		this.noteText = "";
 		this.problem = this.checkConfig();
 		if (this.problem) {
 			Log.error(`[${this.name}] ${this.problem}`);
@@ -53,7 +61,8 @@ Module.register("MMM-TideChartSVG", {
 			stationID: String(this.config.stationID),
 			timezone: this.timezone,
 			units: this.config.units === "metric" ? "metric" : "english",
-			datum: this.config.datum
+			datum: this.config.datum,
+			observationInterval: this.config.observationInterval
 		});
 	},
 
@@ -71,6 +80,9 @@ Module.register("MMM-TideChartSVG", {
 				return "extremeRange must be [low, high], two numbers with low below high.";
 			}
 		}
+		if (!(typeof c.observationInterval === "number" && c.observationInterval >= 6 * 60 * 1000)) {
+			return "observationInterval must be a number of milliseconds, at least 360000 (6 minutes).";
+		}
 		return null;
 	},
 
@@ -84,11 +96,8 @@ Module.register("MMM-TideChartSVG", {
 			this.status.className = "tide-status dimmed xsmall";
 			this.wrapper.append(this.chartBox, this.status);
 			this.setStatus(this.problem || "Loading tides…");
-			if (this.pending) {
-				const { notification, payload } = this.pending;
-				this.pending = null;
-				this.handle(notification, payload);
-			}
+			// Data that arrived before MagicMirror asked for the DOM, in the order it came.
+			for (const { notification, payload } of this.pending.splice(0)) this.handle(notification, payload);
 		}
 		return this.wrapper;
 	},
@@ -96,8 +105,8 @@ Module.register("MMM-TideChartSVG", {
 	socketNotificationReceived (notification, payload) {
 		if (this.problem) return;
 		if (!this.wrapper) {
-			// Data arrived before MagicMirror asked for the DOM; draw it once the wrapper exists.
-			this.pending = { notification, payload };
+			// Data arrived before MagicMirror asked for the DOM; handle it once the wrapper exists.
+			this.pending.push({ notification, payload });
 			return;
 		}
 		this.handle(notification, payload);
@@ -109,8 +118,15 @@ Module.register("MMM-TideChartSVG", {
 			return;
 		}
 		if (notification === "TIDE_DATA") {
-			this.draw(payload);
+			this.tides = payload;
+			this.setStatus("");
+			this.render(true);
 			this.updateStationName(payload.stationName || String(this.config.stationID), Boolean(payload.modeled));
+		} else if (notification === "TIDE_OBSERVATIONS") {
+			this.observations = payload.observations;
+			const latest = this.observations[this.observations.length - 1];
+			if (latest && (!this.latestObservedAt || latest.t > this.latestObservedAt)) this.latestObservedAt = latest.t;
+			if (this.tides) this.render(false);
 		} else if (notification === "TIDE_ERROR") {
 			this.setStatus(this.tides ? "(latest update failed)" : `Tide data unavailable: ${payload.message}`);
 		}
@@ -126,36 +142,51 @@ Module.register("MMM-TideChartSVG", {
 		if (headerChanges) this.updateDom(0);
 	},
 
-	draw (data) {
-		const built = ChartSvg.buildChart(data, {
+	/**
+	 * Draw the chart with the latest predictions and observations. Unless `rebuild` is set, only the observed
+	 * line changes, as long as the height range and the labeled highs/lows stay the same.
+	 */
+	render (rebuild) {
+		const tides = this.tides;
+		const observations = this.observations.filter((p) => p.t >= tides.start && p.t <= tides.end);
+		const data = { ...tides, hilo: ChartSvg.shownExtremes(tides.hilo, observations), observations };
+		const opts = {
 			width: this.config.width,
 			height: this.config.height,
 			timezone: this.timezone,
-			units: data.units,
-			datum: data.datum,
+			units: tides.units,
+			datum: tides.datum,
 			meanSeaLevel: this.config.meanSeaLevel,
 			gridStep: this.config.gridStep,
 			extremeRange: this.config.extremeRange,
 			idPrefix: this.identifier
-		});
+		};
+		const scale = ChartSvg.makeScale(data, opts);
+		const key = JSON.stringify([data.hilo, scale.min, scale.max]);
+		if (!rebuild && key === this.chartKey) {
+			this.overlay.observed.setAttribute("d", ChartSvg.observedPath(this.scale, observations));
+			this.updateOverlay();
+			return;
+		}
 
+		const built = ChartSvg.buildChart(data, opts);
 		const template = document.createElement("template");
 		template.innerHTML = built.svg;
 		const svg = template.content.firstElementChild;
 		this.chartBox.replaceChildren(svg);
 
-		this.tides = data;
+		this.chartKey = key;
 		this.scale = built.scale;
 		this.overlay = {
 			group: svg.querySelector(".tide-overlay"),
 			line: svg.querySelector(".tide-now-line"),
 			dot: svg.querySelector(".tide-now-dot"),
 			label: svg.querySelector(".tide-now-label"),
+			observed: svg.querySelector(".tide-observed"),
 			clipPast: svg.querySelector(".tide-clip-past"),
 			clipFuture: svg.querySelector(".tide-clip-future"),
 			timed: Array.from(svg.querySelectorAll("[data-t]"))
 		};
-		this.setStatus("");
 		this.updateOverlay();
 
 		if (!this.overlayTimer) {
@@ -168,6 +199,9 @@ Module.register("MMM-TideChartSVG", {
 		const now = Date.now();
 		const { group, line, dot, label, clipPast, clipFuture, timed } = this.overlay;
 
+		this.noteText = ChartSvg.observationNote(this.latestObservedAt, now, this.timezone);
+		this.showStatus();
+
 		// Past/future split: grey curve and faded shading up to now.
 		const past = ChartSvg.pastWidth(this.scale, now);
 		clipPast.setAttribute("width", past.toFixed(1));
@@ -177,7 +211,8 @@ Module.register("MMM-TideChartSVG", {
 			el.classList.toggle("tide-past", Number(el.getAttribute("data-t")) < now);
 		}
 
-		const state = ChartSvg.overlayState(this.scale, this.tides.curve, now, this.tides.units);
+		const latest = this.observations[this.observations.length - 1] || null;
+		const state = ChartSvg.overlayState(this.scale, this.tides.curve, now, this.tides.units, latest);
 		if (!state) {
 			group.setAttribute("visibility", "hidden");
 			return;
@@ -194,7 +229,15 @@ Module.register("MMM-TideChartSVG", {
 		group.setAttribute("visibility", "visible");
 	},
 
+	/** The status line: an error or loading message, then the note about old observations if any. */
 	setStatus (text) {
+		this.statusText = text;
+		this.showStatus();
+	},
+
+	showStatus () {
+		const text = [this.statusText, this.noteText].filter(Boolean).join(" ");
+		if (this.status.textContent === text) return;
 		this.status.textContent = text;
 		this.status.style.display = text ? "" : "none";
 	}

@@ -70,6 +70,24 @@
   stroke-width: 1.5;
 }
 
+/* Observed water level: grey like the past curve, but lighter and thicker */
+.MMM-TideChartSVG .tide-observed {
+  fill: none;
+  stroke: #777;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Faint dotted line from a predicted high/low to the shown (observed) one */
+.MMM-TideChartSVG .tide-connector {
+  stroke: #999;
+  stroke-width: 1;
+  stroke-dasharray: 1 3;
+  stroke-linecap: round;
+  opacity: 0.7;
+}
+
 /* Highs and lows */
 .MMM-TideChartSVG .tide-point {
   fill: #7fa7c9;

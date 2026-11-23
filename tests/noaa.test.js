@@ -74,7 +74,8 @@ function fakeNoaa ({ fail = () => false, override = {} } = {}) {
 			name = `${meta[2] ? "offsets" : "station"}-${meta[1]}.json`;
 		} else {
 			const params = new URL(url).searchParams;
-			name = `${params.get("interval") === "hilo" ? "hilo" : "curve"}-${params.get("station")}.json`;
+			const kind = params.get("product") === "water_level" ? "obs" : params.get("interval") === "hilo" ? "hilo" : "curve";
+			name = `${kind}-${params.get("station")}.json`;
 		}
 		const json = name in override ? override[name] : fixture(name);
 		return { ok: true, status: 200, json: async () => json };
@@ -223,4 +224,90 @@ test("the tide source keeps retrying a permanent error like any other", async ()
 test("fetchTides fails on an HTTP error", async () => {
 	const fakeFetch = async () => ({ ok: false, status: 503, json: async () => ({}) });
 	await assert.rejects(noaa.fetchTides(CONFIG, { stationName: null, offsets: null }, Date.now(), fakeFetch), /HTTP 503/);
+});
+
+// --- Observed water level ----------------------------------------------------
+
+// Fixtures: Bremerton's readings over its window up to Nov 10, 07:00 UTC; Seattle's (Eagle Harbor's reference)
+// from a day before Eagle Harbor's window up to Nov 22, 20:00 UTC; and NOAA's answer for a station without a sensor.
+const BREMERTON_OBS_NOW = Date.parse("2026-11-10T07:00:00Z"); // Mon 23:00 PST
+
+test("the observation URL asks for UTC water levels from start to now", () => {
+	const url = new URL(noaa.buildObservationUrl(CONFIG, Date.parse("2026-11-09T08:00:00Z"), BREMERTON_OBS_NOW));
+	assert.equal(`${url.origin}${url.pathname}`, noaa.API_BASE);
+	assert.equal(url.searchParams.get("product"), "water_level");
+	assert.equal(url.searchParams.get("begin_date"), "20261109 08:00");
+	assert.equal(url.searchParams.get("end_date"), "20261110 07:00");
+	assert.equal(url.searchParams.get("station"), "9445958");
+	assert.equal(url.searchParams.get("datum"), "MLLW");
+	assert.equal(url.searchParams.get("time_zone"), "gmt");
+	assert.equal(url.searchParams.get("units"), "english");
+	assert.equal(url.searchParams.get("format"), "json");
+});
+
+test("parses observations, skipping readings with no value", () => {
+	const obs = noaa.parseObservations(fixture("obs-9445958.json"));
+	assert.equal(obs.length, 231);
+	assert.deepEqual(obs[0], { t: Date.parse("2026-11-09T08:00:00Z"), v: Number(fixture("obs-9445958.json").data[0].v) });
+	assert.equal(obs[230].t, BREMERTON_OBS_NOW);
+	const gappy = { data: [{ t: "2026-11-09 08:00", v: "1.5" }, { t: "2026-11-09 08:06", v: "" }, { t: "2026-11-09 08:12", v: "1.7" }] };
+	assert.deepEqual(noaa.parseObservations(gappy).map((p) => p.v), [1.5, 1.7]);
+});
+
+test("a station without observations, and other NOAA errors, become errors", () => {
+	assert.throws(() => noaa.parseObservations(fixture("obs-error.json")), /NOAA: There is no MLLW for the station: 9445882/);
+	assert.throws(() => noaa.parseObservations({}), /no water level data/);
+});
+
+test("a station with a sensor: one request, from the window's start to now", async () => {
+	const { requested, fetchFn } = fakeNoaa();
+	const result = await noaa.fetchObservations(CONFIG, { stationName: "Bremerton, WA", offsets: null }, BREMERTON_OBS_NOW, fetchFn);
+	assert.deepEqual(requested, [noaa.buildObservationUrl(CONFIG, Date.parse("2026-11-09T08:00:00Z"), BREMERTON_OBS_NOW)]);
+	assert.equal(result.stationID, "9445958");
+	assert.equal(result.start, Date.parse("2026-11-09T08:00:00Z"));
+	assert.equal(result.end, Date.parse("2026-11-11T08:00:00Z"));
+	assert.deepEqual(result.observations, noaa.parseObservations(fixture("obs-9445958.json")));
+});
+
+test("a subordinate station: the reference station's observations with the same corrections", async () => {
+	const { requested, fetchFn } = fakeNoaa();
+	const station = await noaa.fetchStation(EAGLE, fetchFn);
+	requested.length = 0;
+	const result = await noaa.fetchObservations(EAGLE, station, EAGLE_NOW, fetchFn);
+
+	// Seattle's readings from a day before the window, and Seattle's highs/lows (for the corrections).
+	const refConfig = { ...EAGLE, stationID: "9447130" };
+	assert.deepEqual(requested, [
+		noaa.buildObservationUrl(refConfig, result.start - noaa.REFERENCE_MARGIN_MS, EAGLE_NOW),
+		noaa.buildUrls(refConfig, result.start - noaa.REFERENCE_MARGIN_MS, result.end + noaa.REFERENCE_MARGIN_MS).hilo
+	]);
+	assert.equal(result.stationID, "9445882");
+
+	// Trimmed to the window's start … now; each reading 4–5 minutes later and ×1.00–1.02 (Eagle Harbor's corrections).
+	const obs = result.observations;
+	assert.ok(obs.length > 100);
+	assert.ok(obs.every((p) => p.t >= result.start && p.t <= EAGLE_NOW));
+	const seattle = noaa.parseObservations(fixture("obs-9447130.json"));
+	const noon = seattle.find((p) => p.t === Date.parse("2026-11-22T12:00:00Z"));
+	const moved = obs.find((p) => p.t >= noon.t + 4 * 60000 && p.t <= noon.t + 5 * 60000);
+	assert.ok(moved, "Seattle's 12:00 reading appears 4–5 minutes later");
+	assert.ok(moved.v >= noon.v * 1.0 - 1e-9 && moved.v <= noon.v * 1.02 + 1e-9);
+});
+
+test("an observation fetch fails if its request fails", async () => {
+	const { fetchFn } = fakeNoaa({ override: { "obs-9445958.json": fixture("obs-error.json") } });
+	await assert.rejects(noaa.fetchObservations(CONFIG, { stationName: null, offsets: null }, BREMERTON_OBS_NOW, fetchFn), /There is no MLLW/);
+	const failing = fakeNoaa({ fail: (url) => /water_level/.test(url) });
+	const station = await noaa.fetchStation(EAGLE, failing.fetchFn);
+	await assert.rejects(noaa.fetchObservations(EAGLE, station, EAGLE_NOW, failing.fetchFn), /HTTP 500/);
+});
+
+test("the daily and observation fetches share one startup step, even when they start together", async () => {
+	const { fetchFn, count } = fakeNoaa();
+	const loadStation = noaa.createStationLoader(CONFIG, fetchFn);
+	const tides = noaa.createTideSource(CONFIG, fetchFn, loadStation);
+	const observations = noaa.createObservationSource(CONFIG, fetchFn, loadStation);
+	await Promise.all([tides(BREMERTON_OBS_NOW), observations(BREMERTON_OBS_NOW)]);
+	await observations(BREMERTON_OBS_NOW);
+	assert.equal(count(STATION_REQUEST), 2); // the station record and its offsets, once
 });
