@@ -79,7 +79,16 @@
   stroke-linejoin: round;
 }
 
-/* Faint dotted line from a predicted high/low to the shown (observed) one */
+/* ETSS surge forecast: a muted version of the extreme-high red, dashed, from now on */
+.MMM-TideChartSVG .tide-etss {
+  fill: none;
+  stroke: #b86b6b;
+  stroke-width: 1.75;
+  stroke-dasharray: 5 4;
+  stroke-linejoin: round;
+}
+
+/* Faint dotted line from a predicted high/low to the shown (observed or ETSS) one */
 .MMM-TideChartSVG .tide-connector {
   stroke: #999;
   stroke-width: 1;

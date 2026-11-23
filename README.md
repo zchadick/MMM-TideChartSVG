@@ -3,12 +3,14 @@
 A [MagicMirror²](https://github.com/MagicMirrorOrg/MagicMirror) module that shows a tide chart
 for one NOAA station, covering today and tomorrow (local time). High and low tides are labeled
 with their time and height, the water level NOAA has measured so far is drawn over the
-predicted curve, and a marker shows the current time and water level.
+predicted curve, and a marker shows the current time and water level. Optionally, when NOAA's
+storm surge model expects the water to differ a lot from the tide prediction, its forecast is
+drawn too.
 
 The chart is drawn as a lightweight SVG with no charting library, so it runs well on small
 hardware such as a Raspberry Pi 3B+.
 
-![MMM-TideChartSVG showing two days of tides for Bremerton, WA](screenshot.png)
+![MMM-TideChartSVG showing two days of tides for Seattle, WA, with the observed water level and the storm surge forecast](screenshot.png)
 
 ## What it shows
 
@@ -22,6 +24,11 @@ hardware such as a Raspberry Pi 3B+.
   observed time and height instead of the predicted ones. A faint dotted line joins the
   predicted point to the observed one, and the label sits outside both: above the higher point
   for a high, below the lower one for a low.
+- **Storm surge forecast** (optional, `etssThreshold`): a muted red dashed line from now on,
+  showing the water level the NWS storm surge model (ETSS) expects, when it differs enough from
+  the prediction. Upcoming highs and lows are then labeled with the forecast values, marked
+  with an asterisk right after the number (e.g. `12.4* ft`), with the same dotted line to the
+  predicted point. See [Storm surge forecast](#storm-surge-forecast-etss).
 - **Now:** a vertical line and a dot, with the current height and whether the tide is rising
   (↑) or falling (↓). The height is the latest observed reading when it is less than an hour
   old, otherwise the predicted height. The arrow follows the predicted curve.
@@ -94,6 +101,52 @@ estimate:
 If any request for a subordinate station fails (its highs and lows, or the reference station's
 data), the module treats the whole fetch as failed rather than draw a less accurate curve.
 
+### Storm surge forecast (ETSS)
+
+Tide predictions are astronomical: they don't know about the weather. Wind, low air pressure
+and river flow can push the water a foot or more above (or below) the prediction for days.
+NOAA's National Weather Service runs a model for this, **ETSS** (Extra-Tropical Storm Surge),
+four times a day. It forecasts the water level about four days ahead at about 565 NOAA
+stations: the tide, plus the modeled surge, plus a correction from the last few days of
+observations.
+
+The module can draw that forecast, but only when it matters. Set `etssThreshold` to a height
+in the chart's units. Every 3 hours the module fetches the forecast. If, at any high or low
+still ahead on the chart, the forecast differs from the prediction by at least that much
+(higher or lower), the forecast is drawn and those highs and lows are labeled with forecast
+values (`12.4* ft`). Otherwise the chart looks as it does without ETSS. Lows count too: a
+forecast can show that a predicted very low tide won't happen. Without `etssThreshold`
+(the default), ETSS is off and nothing is fetched.
+
+**Choosing a threshold.** The water often runs a little above the prediction, so a small
+threshold shows the forecast almost every day. As a guide, at Seattle from November 2025 to
+November 2026 the observed high tide was a median of 0.38 ft above the predicted one (95% of
+highs were within −0.24 to +0.95 ft). How often a two-day chart had at least one high off by:
+
+| Difference | Charts |
+| --- | --- |
+| 0.5 ft (0.15 m) | 67% |
+| 1.0 ft (0.3 m) | 13%, mostly December to April |
+| 1.5 ft (0.45 m) | 2%, December and January |
+| 2.0 ft (0.6 m) | 1%, December |
+
+A threshold of **1.0 to 1.5 ft (0.3 to 0.45 m)** shows the forecast on stormy days and stays
+out of the way otherwise. These numbers are for Seattle; stations elsewhere differ.
+
+**Which ETSS station.** ETSS covers fewer stations than NOAA's tide predictions. The module
+uses the nearest ETSS station that has both observations and tide predictions (for a
+subordinate station, the one nearest its reference station), and logs which one it chose.
+Bremerton and Eagle Harbor both get Seattle. Straight-line distance can cross land into a
+different body of water; if the nearest station isn't a good match, set `etssStation` to the
+one you want. The [ETSS page](https://slosh.nws.noaa.gov/etsurge2.0/) shows the stations on a
+map.
+
+**How the line is made.** ETSS's forecast offset (its forecast minus its own tide, hourly) is
+added to NOAA's 6-minute prediction for your station, blending between ETSS's hours. So the line
+has the prediction's shape, datum and units, shifted by the surge. For a subordinate station
+the offset is added to the reference station's prediction before the station's corrections, so
+the height ratio scales the surge too.
+
 ## Installation
 
 ```sh
@@ -116,7 +169,8 @@ Add the module to `config/config.js`:
     timezone: "America/Los_Angeles",
     meanSeaLevel: 6.78,
     extremeRange: [-3.0, 13.0],
-    observationInterval: 15 * 60 * 1000 // the default; shown as an example
+    observationInterval: 15 * 60 * 1000, // the default; shown as an example
+    etssThreshold: 1.25 // feet; shows the storm surge forecast when it's this far off
   }
 }
 ```
@@ -134,19 +188,27 @@ Add the module to `config/config.js`:
 | `width` | `400` | Chart width in pixels. |
 | `height` | `400` | Chart height in pixels. |
 | `overlayUpdateInterval` | `60000` | How often the current-time marker moves, in milliseconds. |
+| `etssThreshold` | none (off) | Height in the chart's units, e.g. `1.25` ft. Shows the [storm surge forecast](#storm-surge-forecast-etss) when it differs from a coming high or low by at least this much. Suggested: 1.0–1.5 ft (0.3–0.45 m). |
+| `etssStation` | the nearest | NOAA ID of the ETSS station to use, e.g. `"9447130"` (Seattle). Only needed if the nearest one is a poor match. |
 | `observationInterval` | `900000` (15 min) | How often the observed water level is fetched, in milliseconds. At least `360000` (6 minutes): NOAA publishes a reading every 6 minutes, so fetching more often gets nothing new. At the default 400 px width, each pixel is about 8 minutes, so 15 minutes leaves at most a 2–3 px gap before the current-time line. |
 
 The height scale always includes 0 (and `meanSeaLevel` when set), so the zero line is always on
-the chart. It also stretches to fit the observed water level and the observed highs and lows,
-so nothing is cut off when the water goes above or below the predicted range.
+the chart. It also stretches to fit the observed water level, the storm surge forecast when
+shown, and their highs and lows, so nothing is cut off when the water goes above or below the
+predicted range.
 
 ## Limitations
 
 - **One station per mirror.** Only the first instance's station is used. A second instance
   with a different station shows "Only one tide station per mirror is supported."
 - **The predicted curve doesn't include weather** (storm surge, wind, air pressure, river
-  flow). The observed line shows how far the real water has differed so far today, but
-  nothing on the chart forecasts it.
+  flow). The observed line shows how far the real water has differed so far today, and the
+  optional storm surge forecast shows what's expected, but only when it passes your threshold.
+- **The storm surge forecast is model guidance, not an official forecast.** For coastal flood
+  warnings, follow your local NWS office. ETSS isn't meant for tropical storms (hurricanes).
+- **ETSS data comes from the ETSS web page's own data files,** not a documented API, so it
+  could change without notice. If it fails, the chart simply shows no forecast (and the log
+  says why). The forecast is hourly, so its peaks are blended onto the 6-minute prediction.
 - **Observed water levels are NOAA's preliminary readings,** shown as they come in. NOAA may
   correct them later. They can't be turned off. A station without a gauge shows none.
 - **Subordinate stations:** the curve between highs and lows is modeled (see
