@@ -225,6 +225,56 @@ To decide once real data can be compared:
 - **Curve resolution:** 6-minute predictions vs. hourly vs. curve from high/low only.
 - **Datum:** which height baseline to display (MLLW is NOAA's default for predictions).
 
+Decided, to be built in two pull requests (1: observed water level; 2: ETSS surge):
+
+- **Goal:** plot the observed water level (6-minute CO-OPS `water_level`) and, when a threshold
+  is met, an ETSS surge-adjusted forecast over the predicted (astronomical) curve.
+- **Layers:** the base (axes, labels, shading, predicted curve) is still built once a day.
+  Observed and ETSS are one path each, in the same `<svg>`, updated in place by changing `d`.
+  Split them into stacked SVGs only if the Pi shows a performance problem. At midnight both
+  are redrawn against the new window. The height range also includes the observed and ETSS
+  values (curves and shown highs/lows); when a refresh changes the range or the shown
+  highs/lows, the whole chart is rebuilt (rare).
+- **Observed refresh:** `observationInterval`, default 15 min, minimum 6 min (NOAA publishes
+  every 6 min, ~5 min behind). Each fetch covers the window start to now (≤ 480 points,
+  ~40 KB). At ~8 min per pixel (356 px plot), the gap to the now-line stays ≤ ~2.5 px. On
+  failure: keep the last line, retry next interval. A note shows when the newest observation
+  is more than 6 hours old. Always on (no switch).
+- **Current value:** the overlay shows the latest observation if it's under 1 hour old,
+  otherwise the predicted value; the arrow follows the predicted curve.
+- **High/low labels:** a past high/low shows the observed extreme (its own time and height,
+  within ±90 min of the predicted time) once the latest reading is ≥ 30 min past it. Until
+  then, and for upcoming ones, the ETSS extreme when ETSS is shown, with `*` right after the
+  number (`12.4* ft`); otherwise the prediction. Badge rules apply to the shown value. Where
+  the shown value differs from the prediction, a faint dotted connector joins the two, and
+  highs are labeled above the higher point, lows below the lower one.
+- **Appearance:** observed = grey line, thicker than the past curve (`#777`, 3 px); ETSS =
+  muted red dashed line (`#b86b6b`, 1.75 px, `5 4`) from now on; connector `#999`, 1 px,
+  dotted `1 3`, 70% opacity.
+- **Subordinate stations:** observations are the reference station's, transformed with the
+  same corrections (modeled, not measured). ETSS: the station nearest the *reference*
+  station; the reference's ETSS-adjusted curve then goes through the corrections (the height
+  ratio scales the surge too).
+- **ETSS source:** ETSS 2.0 (`slosh.nws.noaa.gov/etsurge2.0/`): station list
+  `datafiles/master.csv` (NOAA ID, lat/lon, datums, `Obs?`, `Tide?`), fetched once at
+  startup; data via POST `fixed/php/getData.php` with `st=<NOAA id>` (JSON arrays `ts`, `pred`,
+  `ss`, `anom`, `obs`, `twl`; 6-minute timestamps, `ss`/`twl` hourly; 9999 = missing; feet).
+  Both are undocumented web-page backends, so ETSS is optional and its failures are silent.
+  Refresh every 3 hours (model runs 00/06/12/18Z, arriving a few hours late).
+- **ETSS curve:** offset(t) = ETSS total − ETSS tide (hourly), interpolated between hours and
+  added to the 6-minute prediction. Datum-independent.
+- **ETSS station:** nearest ETSS station with both `Obs?` and `Tide?`, with an `etssStation`
+  override. Nearest-only fails: for Bremerton it picks the Shilshole GPS buoy (no tide) or
+  Wauna (no obs, different basin); the rule picks Seattle 9447130 for Bremerton and Eagle
+  Harbor.
+- **ETSS threshold:** `etssThreshold`, in chart units; unset = the whole ETSS step is skipped.
+  Show the ETSS line if, at any predicted high or low still ahead in the window,
+  |ETSS curve − prediction| ≥ threshold (lows too: shows when a predicted very low tide won't
+  happen). Checked on each ETSS fetch and at the daily refresh. README must suggest values:
+  Seattle Nov 2025–Nov 2026 observed-minus-predicted at highs had median +0.38 ft, p95
+  +0.95 ft; a 2-day window had a high off by ≥ 0.5 ft 67% of the time, ≥ 1 ft 13%, ≥ 1.5 ft
+  2%, ≥ 2 ft 1%.
+
 ## Rejected ideas
 
 Ideas that were considered and rejected, with the reason, so they aren't proposed again.
@@ -234,5 +284,14 @@ Ideas that were considered and rejected, with the reason, so they aren't propose
 - **Building the chart in Node as an SVG file shown with `<img>`:** it adds disk writes,
   caching and coordinate-matching between two layers. The chart is small enough that
   inline SVG costs little.
-- **Refreshing data on a timer (e.g. every 6 hours):** predictions don't change during the
-  day; one fetch at start and one at 00:01 is enough.
+- **Refreshing predictions on a timer (e.g. every 6 hours):** predictions don't change during
+  the day; one fetch at start and one at 00:01 is enough. (Observed and ETSS data change
+  during the day and have their own timers.)
+- **A switch to turn off observed water levels:** not implemented; they're always shown when
+  the station (or its reference station) has them.
+- **Clipping observed/ETSS values that go beyond the predicted height range** (with labels
+  moved inside the curve when they don't fit): labels collide and lines still get cut off.
+  The range stretches instead.
+- **An ETSS threshold as a percent of the predicted high:** it depends on the datum (MLLW vs
+  MSL), is meaningless near 0, and surge doesn't scale with tide height. It's an absolute
+  height instead.
