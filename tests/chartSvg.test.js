@@ -154,6 +154,15 @@ test("extremes: badges only for highs above / lows below the range (strictly)", 
 	assert.equal(count(svg, /class="tide-badge tide-badge-low"/g), 1);
 	assert.match(svg, /class="tide-label tide-label-high tide-extreme tide-extreme-high"[^>]*><tspan[^>]*>06:24</);
 	assert.match(svg, /class="tide-point tide-point-low tide-extreme tide-extreme-low"/);
+
+	// The pill sits behind the height line only, sized to the height text ("11.9 ft": 7 characters).
+	const pill = svg.match(/class="tide-badge tide-badge-high"[^>]*x="([\d.-]+)" y="([\d.-]+)" width="([\d.]+)" height="17" rx="8.5"/);
+	assert.ok(pill);
+	assert.equal(Number(pill[3]), 7 * 7 + 10);
+	const label = svg.match(/class="tide-label tide-label-high tide-extreme tide-extreme-high"[^>]*><tspan class="tide-label-time" x="([\d.-]+)" y="([\d.-]+)">[^<]*<\/tspan><tspan class="tide-label-height" x="[\d.-]+" y="([\d.-]+)">11\.9 ft</);
+	assert.ok(label);
+	assert.ok(Math.abs(Number(pill[2]) + 12.5 - Number(label[3])) < 0.01);
+	assert.ok(Math.abs(Number(pill[1]) + Number(pill[3]) / 2 - Number(label[1])) < 0.01);
 });
 
 // --- X-axis -----------------------------------------------------------------

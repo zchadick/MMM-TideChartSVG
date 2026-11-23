@@ -38,9 +38,9 @@ hardware such as a Raspberry Pi 3B+.
   dashed line marks mean sea level and the shading shows how far the tide is above it (blue) or
   below it (sand), fading toward the line.
 - **Extreme tides** (optional, `extremeRange`): highs above or lows below your range get their
-  label on a red (high) or purple (low) badge.
+  height on a red (high) or purple (low) pill; once in the past, the pill becomes an outline.
 - **The station's name** as the module's header (from NOAA), unless you set your own `header`.
-  An asterisk after the header (e.g. "Eagle Harbor, Bainbridge Island, WA\*") means the curve
+  An asterisk after the header (e.g. "Eagle Harbor, WA\*") means the curve
   is modeled from another station; see [Subordinate stations](#subordinate-stations).
 
 ## Data
@@ -68,7 +68,7 @@ A station without a water level gauge simply shows no observed line.
 
 ### Subordinate stations
 
-Some NOAA stations, such as Eagle Harbor, Bainbridge Island (`9445882`), are *subordinate*
+Some NOAA stations, such as Eagle Harbor (`9445882`), are *subordinate*
 stations. NOAA publishes only their highs and lows, not a tide curve. It calculates those highs
 and lows from a nearby reference station (for Eagle Harbor, Seattle, `9447130`) with two fixed
 corrections, one for highs and one for lows: a time shift in minutes and a height ratio.
@@ -184,7 +184,7 @@ Add the module to `config/config.js`:
 | `datum` | `"MLLW"` | NOAA height baseline ([datum options](https://tidesandcurrents.noaa.gov/datum_options.html)). MLLW (mean lower low water) is the usual baseline for tide charts. Subordinate stations support only `"MLLW"`. |
 | `meanSeaLevel` | none | Height of mean sea level, in the chart's units and datum (e.g. `6.78` ft above MLLW). Adds the dashed MSL line and shades above/below it. Look it up on the station's NOAA "Datums" page: MSL minus your datum (e.g. MSL − MLLW). Subordinate stations have no datums; use the reference station's MSL, optionally multiplied by the station's height ratio (e.g. Seattle's 6.64 ft gives about 6.7 ft for Eagle Harbor). |
 | `gridStep` | `2` ft / `0.5` m | Height between grid lines, in the chart's units. |
-| `extremeRange` | none | `[low, high]`, e.g. `[-3.0, 13.0]`. Lows below `low` and highs above `high` get a colored badge. |
+| `extremeRange` | none | `[low, high]`, e.g. `[-3.0, 13.0]`. Lows below `low` and highs above `high` get their height on a colored pill. |
 | `width` | `400` | Chart width in pixels. |
 | `height` | `400` | Chart height in pixels. |
 | `overlayUpdateInterval` | `60000` | How often the current-time marker moves, in milliseconds. |
