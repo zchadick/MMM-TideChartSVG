@@ -40,7 +40,7 @@ hardware such as a Raspberry Pi 3B+.
 - **Extreme tides** (optional, `extremeRange`): highs above or lows below your range get their
   height on a red (high) or purple (low) pill; once in the past, the pill becomes an outline.
 - **The station's name** as the module's header (from NOAA), unless you set your own `header`.
-  An asterisk after the header (e.g. "Eagle Harbor, Bainbridge Island, WA\*") means the curve
+  An asterisk after the header (e.g. "Eagle Harbor, WA\*") means the curve
   is modeled from another station; see [Subordinate stations](#subordinate-stations).
 
 ## Data
@@ -68,7 +68,7 @@ A station without a water level gauge simply shows no observed line.
 
 ### Subordinate stations
 
-Some NOAA stations, such as Eagle Harbor, Bainbridge Island (`9445882`), are *subordinate*
+Some NOAA stations, such as Eagle Harbor (`9445882`), are *subordinate*
 stations. NOAA publishes only their highs and lows, not a tide curve. It calculates those highs
 and lows from a nearby reference station (for Eagle Harbor, Seattle, `9447130`) with two fixed
 corrections, one for highs and one for lows: a time shift in minutes and a height ratio.

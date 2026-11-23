@@ -69,7 +69,7 @@ match MMM-NOAATides; `timezone` is deliberately not their `time` (NOAA's `lst_ld
 it takes an IANA name.
 
 - `stationID` (required): NOAA station ID (test stations: `9445958`, Bremerton, WA; subordinate:
-  `9445882`, Eagle Harbor, Bainbridge Island, WA, reference station `9447130`, Seattle)
+  `9445882`, Eagle Harbor, WA, reference station `9447130`, Seattle)
 - `stationName`: header text; default NOAA's name (`"Bremerton, WA"`), else the station ID.
   A `header` on the module entry (MagicMirror's own option) wins over both.
 - `timezone`: IANA name (e.g. `"America/Los_Angeles"`); defaults to the mirror's timezone

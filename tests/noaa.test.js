@@ -54,7 +54,7 @@ test("station name comes from NOAA's station metadata", () => {
 	assert.equal(noaa.parseStationName({}), null);
 });
 
-// Eagle Harbor, Bainbridge Island: a subordinate station of Seattle (9447130). Fixtures cover Nov 22–23, 2026.
+// Eagle Harbor: a subordinate station of Seattle (9447130). Fixtures cover Nov 22–23, 2026.
 const EAGLE = { ...CONFIG, stationID: "9445882" };
 const EAGLE_NOW = Date.parse("2026-11-22T20:00:00Z");
 const BREMERTON_NOW = Date.parse("2026-11-09T23:30:00Z");
@@ -110,7 +110,7 @@ test("added-feet (\"A\") offsets and incomplete offsets are errors", () => {
 test("the startup step gets the name and the offsets", async () => {
 	const { fetchFn, count } = fakeNoaa();
 	const eagle = await noaa.fetchStation(EAGLE, fetchFn);
-	assert.equal(eagle.stationName, "Eagle Harbor, Bainbridge Island, WA");
+	assert.equal(eagle.stationName, "Eagle Harbor, WA");
 	assert.equal(eagle.offsets.referenceID, "9447130");
 	const bremerton = await noaa.fetchStation(CONFIG, fetchFn);
 	assert.deepEqual(bremerton, { stationName: "Bremerton, WA", offsets: null });
@@ -165,7 +165,7 @@ test("a subordinate station: its own highs and lows, and a curve modeled from th
 	assert.equal(new URL(ref.curve).searchParams.get("end_date"), "20261125 08:00");
 
 	assert.equal(data.modeled, true);
-	assert.equal(data.stationName, "Eagle Harbor, Bainbridge Island, WA");
+	assert.equal(data.stationName, "Eagle Harbor, WA");
 	assert.deepEqual(data.hilo, noaa.parsePredictions(fixture("hilo-9445882.json")));
 	assert.equal(data.curve[0].t, data.start);
 	assert.equal(data.curve[data.curve.length - 1].t, data.end);
