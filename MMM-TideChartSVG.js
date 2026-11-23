@@ -5,7 +5,7 @@
  * chart never disappears. After the first draw the module calls updateDom only when the station name
  * (the header) changes; otherwise only the overlay changes, on its own interval. New observations only
  * change the observed line, unless they change the height range or a labeled high/low (then the chart is
- * rebuilt).
+ * rebuilt); the same goes for a new ETSS surge forecast and its dashed line.
  */
 Module.register("MMM-TideChartSVG", {
 	defaults: {
@@ -20,7 +20,9 @@ Module.register("MMM-TideChartSVG", {
 		width: 400,
 		height: 400,
 		overlayUpdateInterval: 60 * 1000,
-		observationInterval: 15 * 60 * 1000 // how often the observed water level is fetched; at least 6 minutes
+		observationInterval: 15 * 60 * 1000, // how often the observed water level is fetched; at least 6 minutes
+		etssThreshold: null, // show the ETSS surge forecast when it differs from a coming high/low by this much; null = off
+		etssStation: null // NOAA ID of the ETSS station to use; null = the nearest one
 	},
 
 	getScripts () {
@@ -42,6 +44,8 @@ Module.register("MMM-TideChartSVG", {
 		this.tides = null;
 		this.observations = [];
 		this.latestObservedAt = null;
+		this.etssCurve = null;
+		this.etssVisible = false;
 		this.scale = null;
 		this.chartKey = null;
 		this.overlay = null;
@@ -62,7 +66,9 @@ Module.register("MMM-TideChartSVG", {
 			timezone: this.timezone,
 			units: this.config.units === "metric" ? "metric" : "english",
 			datum: this.config.datum,
-			observationInterval: this.config.observationInterval
+			observationInterval: this.config.observationInterval,
+			// ETSS runs only when a threshold is set.
+			etss: this.config.etssThreshold === null ? null : { station: this.config.etssStation === null ? null : String(this.config.etssStation) }
 		});
 	},
 
@@ -83,6 +89,10 @@ Module.register("MMM-TideChartSVG", {
 		if (!(typeof c.observationInterval === "number" && c.observationInterval >= 6 * 60 * 1000)) {
 			return "observationInterval must be a number of milliseconds, at least 360000 (6 minutes).";
 		}
+		if (c.etssThreshold !== null && !(typeof c.etssThreshold === "number" && c.etssThreshold > 0)) {
+			return "etssThreshold must be a number above 0 (a height in the chart's units), or null to turn ETSS off.";
+		}
+		if (c.etssStation !== null && !/^\d+$/.test(String(c.etssStation))) return "etssStation must be a NOAA station ID, e.g. \"9447130\".";
 		return null;
 	},
 
@@ -120,6 +130,7 @@ Module.register("MMM-TideChartSVG", {
 		if (notification === "TIDE_DATA") {
 			this.tides = payload;
 			this.setStatus("");
+			this.updateEtssVisible();
 			this.render(true);
 			this.updateStationName(payload.stationName || String(this.config.stationID), Boolean(payload.modeled));
 		} else if (notification === "TIDE_OBSERVATIONS") {
@@ -127,6 +138,12 @@ Module.register("MMM-TideChartSVG", {
 			const latest = this.observations[this.observations.length - 1];
 			if (latest && (!this.latestObservedAt || latest.t > this.latestObservedAt)) this.latestObservedAt = latest.t;
 			if (this.tides) this.render(false);
+		} else if (notification === "TIDE_ETSS") {
+			this.etssCurve = payload.curve;
+			if (this.tides) {
+				this.updateEtssVisible();
+				this.render(false);
+			}
 		} else if (notification === "TIDE_ERROR") {
 			this.setStatus(this.tides ? "(latest update failed)" : `Tide data unavailable: ${payload.message}`);
 		}
@@ -142,14 +159,21 @@ Module.register("MMM-TideChartSVG", {
 		if (headerChanges) this.updateDom(0);
 	},
 
+	/** Show the ETSS curve? Decided when ETSS data or new predictions arrive (not on every redraw). */
+	updateEtssVisible () {
+		this.etssVisible = ChartSvg.etssShown(this.tides.hilo, this.etssCurve, Date.now(), this.config.etssThreshold);
+	},
+
 	/**
-	 * Draw the chart with the latest predictions and observations. Unless `rebuild` is set, only the observed
-	 * line changes, as long as the height range and the labeled highs/lows stay the same.
+	 * Draw the chart with the latest predictions, observations and ETSS curve. Unless `rebuild` is set, only the
+	 * observed and ETSS lines change, as long as the height range and the labeled highs/lows stay the same.
 	 */
 	render (rebuild) {
 		const tides = this.tides;
-		const observations = this.observations.filter((p) => p.t >= tides.start && p.t <= tides.end);
-		const data = { ...tides, hilo: ChartSvg.shownExtremes(tides.hilo, observations), observations };
+		const inWindow = (p) => p.t >= tides.start && p.t <= tides.end;
+		const observations = this.observations.filter(inWindow);
+		const etss = this.etssVisible ? this.etssCurve.filter(inWindow) : null;
+		const data = { ...tides, hilo: ChartSvg.shownExtremes(tides.hilo, observations, etss), observations, etss };
 		const opts = {
 			width: this.config.width,
 			height: this.config.height,
@@ -162,9 +186,10 @@ Module.register("MMM-TideChartSVG", {
 			idPrefix: this.identifier
 		};
 		const scale = ChartSvg.makeScale(data, opts);
-		const key = JSON.stringify([data.hilo, scale.min, scale.max]);
+		const key = JSON.stringify([data.hilo, scale.min, scale.max, Boolean(etss)]);
 		if (!rebuild && key === this.chartKey) {
 			this.overlay.observed.setAttribute("d", ChartSvg.observedPath(this.scale, observations));
+			this.overlay.etss.setAttribute("d", ChartSvg.etssPath(this.scale, etss));
 			this.updateOverlay();
 			return;
 		}
@@ -183,6 +208,7 @@ Module.register("MMM-TideChartSVG", {
 			dot: svg.querySelector(".tide-now-dot"),
 			label: svg.querySelector(".tide-now-label"),
 			observed: svg.querySelector(".tide-observed"),
+			etss: svg.querySelector(".tide-etss"),
 			clipPast: svg.querySelector(".tide-clip-past"),
 			clipFuture: svg.querySelector(".tide-clip-future"),
 			timed: Array.from(svg.querySelectorAll("[data-t]"))

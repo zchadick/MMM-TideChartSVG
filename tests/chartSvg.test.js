@@ -304,3 +304,54 @@ test("note when the latest observation is more than 6 hours old", () => {
 	assert.equal(ChartSvg.observationNote(latest, latest + 6 * 60 * MIN + 1, LA), "Observations not updated since Mon 08:12");
 	assert.equal(ChartSvg.observationNote(null, latest, LA), "");
 });
+
+// --- ETSS surge forecast -----------------------------------------------------
+
+// A stand-in ETSS curve: the prediction plus 1.5 ft.
+const ETSS = DATA.curve.map((p) => ({ t: p.t, v: p.v + 1.5 }));
+
+test("shown highs/lows: the ETSS high/low (marked) where nothing is observed yet; observed ones win", () => {
+	const etssOnly = ChartSvg.shownExtremes(DATA.hilo, [], ETSS);
+	assert.ok(etssOnly.every((p, i) => p.etss && p.predicted.v === DATA.hilo[i].v && Math.abs(p.v - (DATA.hilo[i].v + 1.5)) < 0.05));
+
+	const both = ChartSvg.shownExtremes(DATA.hilo, OBS, ETSS);
+	assert.equal(both.filter((p) => p.etss).length, 5); // Monday's first three are observed (see above)
+	assert.deepEqual(both.slice(0, 3), ChartSvg.shownExtremes(DATA.hilo, OBS).slice(0, 3));
+	assert.equal(ChartSvg.shownExtremes(DATA.hilo, [], null), DATA.hilo);
+});
+
+test("ETSS labels get * right after the number, a connector, and badges by the ETSS value", () => {
+	const shown = ChartSvg.shownExtremes(DATA.hilo, [], ETSS);
+	const { svg } = ChartSvg.buildChart({ ...DATA, hilo: shown, etss: ETSS }, { ...OPTS, extremeRange: [-3, 13] });
+	assert.match(svg, /class="tide-label-height"[^>]*>13\.1\* ft</); // Mon 05:44 high: predicted 11.6
+	assert.equal(count(svg, /\* ft</g), 8);
+	assert.equal(count(svg, /class="tide-connector"/g), 8);
+	assert.equal(count(svg, /class="tide-badge tide-badge-high"/g), 2); // 13.1 and 13.4 are above 13
+	assert.equal(ChartSvg.formatHeight(-0.04, "metric", "*"), "0.0* m");
+});
+
+test("the ETSS line: one dashed path drawn from now on (future clip); empty when not shown; covered by the range", () => {
+	const { svg, scale } = ChartSvg.buildChart({ ...DATA, etss: ETSS }, OPTS);
+	const d = /class="tide-etss" clip-path="url\(#m1-future\)" d="([^"]*)"/.exec(svg)[1];
+	assert.equal(count(d, /[ML]/g), ETSS.length);
+	assert.equal(scale.max, Math.max(...ETSS.map((p) => p.v)));
+	assert.match(ChartSvg.buildChart(DATA, OPTS).svg, /class="tide-etss" clip-path="url\(#m1-future\)" d=""/);
+	assert.equal(ChartSvg.etssPath(null, null), "");
+});
+
+test("ETSS is shown when a coming high or low differs by at least the threshold, either way", () => {
+	const start = DATA.start;
+	assert.equal(ChartSvg.etssShown(DATA.hilo, ETSS, start, 1.5), true);
+	assert.equal(ChartSvg.etssShown(DATA.hilo, ETSS, start, 1.6), false);
+	const lower = DATA.curve.map((p) => ({ t: p.t, v: p.v - 1.5 }));
+	assert.equal(ChartSvg.etssShown(DATA.hilo, lower, start, 1.5), true);
+	// Only highs/lows still ahead count: after the last one, nothing.
+	assert.equal(ChartSvg.etssShown(DATA.hilo, ETSS, DATA.hilo[DATA.hilo.length - 1].t + 1, 1), false);
+	// Lows count too: raise only the curve around the last low (Tue 23:37 PST), by 2 ft.
+	const last = DATA.hilo[DATA.hilo.length - 1];
+	const lowOnly = DATA.curve.map((p) => ({ t: p.t, v: p.v + (Math.abs(p.t - last.t) <= 3 * 60 * MIN ? 2 : 0) }));
+	assert.equal(last.type, "L");
+	assert.equal(ChartSvg.etssShown(DATA.hilo, lowOnly, start, 1.9), true);
+	assert.equal(ChartSvg.etssShown(DATA.hilo, ETSS, start, null), false);
+	assert.equal(ChartSvg.etssShown(DATA.hilo, null, start, 1), false);
+});
