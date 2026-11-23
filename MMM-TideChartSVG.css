@@ -122,7 +122,7 @@
   fill: #555;
 }
 
-/* Extreme tides: label on a solid badge (red high, purple low); an outline once in the past */
+/* Extreme tides: height on a solid pill (red high, purple low); an outline once in the past. The time stays a normal label. */
 .MMM-TideChartSVG .tide-badge-high {
   fill: #ff6b6b;
 }
@@ -131,7 +131,7 @@
   fill: #c77dff;
 }
 
-.MMM-TideChartSVG .tide-label.tide-extreme tspan {
+.MMM-TideChartSVG .tide-label.tide-extreme .tide-label-height {
   fill: #000;
   font-weight: 700;
 }
@@ -162,12 +162,12 @@
   stroke: #c77dff;
 }
 
-.MMM-TideChartSVG .tide-label.tide-extreme-high.tide-past tspan {
+.MMM-TideChartSVG .tide-label.tide-extreme-high.tide-past .tide-label-height {
   fill: #ff6b6b;
   opacity: 0.6;
 }
 
-.MMM-TideChartSVG .tide-label.tide-extreme-low.tide-past tspan {
+.MMM-TideChartSVG .tide-label.tide-extreme-low.tide-past .tide-label-height {
   fill: #c77dff;
   opacity: 0.6;
 }

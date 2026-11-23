@@ -297,8 +297,9 @@ Other station reference data on the same API (not used by the module):
   end of the window. Highs/lows not yet observed show the ETSS curve's extreme with `*` right
   after the number (`12.4* ft`), with the same connector and label placement. The header's
   `*` (modeled curve) can appear too; accepted.
-- **Extreme tides:** the label sits on a badge, red for highs and purple for lows; once in
-  the past, the badge becomes an outline. Badge width is estimated from the text length.
+- **Extreme tides:** the height sits on a pill-shaped badge (black bold text), red for highs
+  and purple for lows; the time stays a normal label. Once in the past, the pill becomes an
+  outline and the height takes its color. Pill width is estimated from the height's length.
 - **X-axis:** one row; the day name starts each day, then `06`, `12`, `18` under short
   ticks; a taller tick and a dashed divider at midnight.
 - **Overlay:** a vertical line at the current time, a blue dot with a white outline, and the
